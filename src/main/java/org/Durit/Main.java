@@ -2,27 +2,70 @@ package org.Durit;
 
 import com.fazecast.jSerialComm.SerialPort;
 
-import java.util.Arrays;
-import java.util.Scanner;
-
-//TIP To <b>Run</b> code, press <shortcut actionId="Run"/> or
-// click the <icon src="AllIcons.Actions.Execute"/> icon in the gutter.
 public class Main {
     public static void main(String[] args) {
-        System.out.println("Portas disponiveis: ");
-        SerialPort[] portas = SerialPort.getCommPorts();
-        Arrays.stream(portas).forEach(SerialPort::getSystemPortName);
+       SerialPort[] portas;
+       portas = SerialPort.getCommPorts();
+       SerialPort sensor = portas[1];
+        int baud = 115200;
+        int hScanner = 0;
+        int Address  = 0; // você está usando RS232 com Address=0
 
-        Scanner scan = new Scanner(System.in);
-        System.out.println("Escreva o nome da porta");
-        String nomeDaPorta = scan.nextLine();
-        System.out.println(nomeDaPorta);
-
-        RFIDReaderSimple reader = new RFIDReaderSimple(nomeDaPorta);
-
-        if(reader.connect()){
-            reader.iniciarLeitura();
+        Reader r = new Reader();
+        if (!r.open(sensor, baud)) {
+            System.err.println("Falha ao abrir porta: " +sensor.getDescriptivePortName() );
+            return;
         }
 
+        try {
+            int res;
+            int ConnectMode = 1; // 1 = RS232
+
+            // ---- Ler BasicParam (até 5 tentativas) ----
+            byte[] gBasicParam = new byte[32];
+            for (int i = 0; i < 5; i++) {
+                res = r.ReadBasicParam(hScanner, gBasicParam, Address);
+                if (res == Reader._OK) break;
+                if (i == 4) {
+                    System.err.println("Connect Reader Fail!(BasicParam)");
+                    return;
+                }
+            }
+            System.out.println("BasicParam OK");
+
+            // ---- Ler AutoParam (até 5 tentativas) ----
+            byte[] gAutoParam = new byte[32];
+            for (int i = 0; i < 5; i++) {
+                res = r.ReadAutoParam(hScanner, gAutoParam, Address);
+                if (res == Reader._OK) {
+                    // host port (mantendo sem “inventar”: se quiser o cálculo direto: ((b21&0xFF)<<8)|(b22&0xFF))
+                    int b21 = gAutoParam[21] & 0xFF;
+                    int b22 = gAutoParam[22] & 0xFF;
+                    int iHostPort = (b21 << 8) | b22;
+                    System.out.println("AutoParam OK, hostPort=" + iHostPort);
+                    break;
+                }
+                if (i == 4) {
+                    System.err.println("Connect Reader Fail!(AutoParam)");
+                    return;
+                }
+            }
+
+
+            // ---- Start AutoMode (RS232) ----
+            r.iniciarLeitura();
+            r.imprimirTags();
+            // ---- Stop AutoMode (RS232) ----
+            res = r.AutoMode(hScanner, 0, Address); // 0 = Auto mode padrão do leitor
+            if (res == Reader._OK) {
+                System.out.println("Stop AutoMode Success!");
+            } else {
+                System.err.println("Stop AutoMode Fail! Please try again!");
+            }
+
+        } finally {
+            r.close();
+
+        }
     }
 }
