@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sensor-pg
+    environment:
+      POSTGRES_DB: sensor
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - sensor_pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d sensor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  sensor_pgdata:

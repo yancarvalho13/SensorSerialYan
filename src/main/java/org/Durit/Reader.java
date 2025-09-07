@@ -234,6 +234,21 @@ public class Reader {
         return fRes;
     }
 
+    public void pararLeitura(){
+        int res;
+        int hScanner = 0;
+        int Address = 0;
+        res = AutoMode(hScanner, 0, Address); // 0 = Auto mode padrão do leitor
+        if (res == Reader._OK) {
+            System.out.println("Stop AutoMode Success!");
+        } else {
+            System.err.println("Stop AutoMode Fail! Please try again!");
+        }
+    }
+
+
+
+
     // ---------- SerialBuffer (RX/TX) compatível com o legado ----------
     private boolean SerialBuffer(int hScanner, byte[] lpPutBuf, byte[] lpGetBuf, int nBufLen) {
         try {
@@ -273,7 +288,61 @@ public class Reader {
         System.out.println(bancoDeTags);
     }
 
-    public void iniciarLeitura(){
+    public HashMap<String, String> getBancoDeTags() {
+        if(open(port, 9600)){
+            close();
+            return bancoDeTags;
+        }
+        return bancoDeTags;
+
+    }
+
+    public void iniciarLeituraManual(){
+        int hScanner = 0;
+        int Address = 0;
+        int res;
+        res = AutoMode(hScanner, 1, Address); // 1 = Command mode ON (auto test inicia)
+
+
+        if (res == Reader._OK) {
+            System.out.println("Start AutoMode Success!");
+            // Simula o MyTimerSerialAuto: consome a serial por alguns segundos
+            long end = System.currentTimeMillis() + 3000;
+            StringBuilder buf = new StringBuilder(128);
+
+            while (System.currentTimeMillis() < end) {
+                int b = this.GetSerialData();
+                if (b > 0) {
+                    char ch = (char) (b & 0xFF);
+                    if (ch == '\r' || ch == '\n') {
+                        String line = buf.toString().trim();
+                        if (!line.isEmpty()){
+                            if(!bancoDeTags.containsValue(_ETIQUETA)){
+                                bancoDeTags.put("Etiqueta", line);
+                            };
+                            if(!bancoDeTags.containsKey("Cartao") && !line.contains(_ETIQUETA)){
+                                bancoDeTags.put("Cartao", line);
+                            }
+
+                        }
+                        buf.setLength(0);
+                    } else {
+                        buf.append(ch);
+                    }
+                } else {
+                    // dá uma folguinha pro CPU
+                    try { Thread.sleep(10); } catch (InterruptedException ignored) {}
+                }
+
+            }
+        } else {
+            System.err.println("Start AutoMode Fail! Please try again!");
+        }
+        pararLeitura();
+
+    }
+
+    public void iniciarLeituraAutomatica(){
         int hScanner = 0;
         int Address = 0;
         int res;
