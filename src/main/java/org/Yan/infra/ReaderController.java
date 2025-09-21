@@ -1,7 +1,7 @@
-package org.Durit.infra;
+package org.Yan.infra;
 
 import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.driver.Reader;
+import org.Yan.driver.Reader;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;

@@ -1,17 +1,46 @@
-package org.Durit;
+package org.Yan;
 
-import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.driver.Reader;
+import org.Yan.driver.Reader;
 
-import java.util.List;
 import java.util.Set;
 
 public class Main {
     public static void main(String[] args) {
-        SerialPortRunner();
+//        SerialPortRunner();
+        WirelessRunner();
+//        try(ServerSocket server = new ServerSocket(60000)){
+//            Socket socket = server.accept();
+//            System.out.println("conectado: " + socket.getRemoteSocketAddress());
+//            InputStream in = socket.getInputStream();
+//            byte[] buf = new byte[1024];
+//            while (true) {
+//                int n = in.read(buf);
+//                if (n > 0) {
+//                    String hex = bytesToHex(buf, n);
+//                    System.out.println("Recebido: " + hex);
+//                }
+//            }
+//
+//        }catch (Exception e ){
+//            e.printStackTrace();
+//        }
 
 
     }
+
+    private static void WirelessRunner() {
+        Reader r = new Reader();
+
+// PC escuta (60000) e espera o módulo conectar
+        r.Net_WirelessListen(9000, 10000); // 10s
+
+        short[] hv = new short[1], sv = new short[1];
+        r.wirelessGetReaderVersion(0, hv, sv);   // internamente chame Net_PacketTcp
+        System.out.println("HW=" + hv[0] + "  SW=" + sv[0]);
+//
+        Set<String> tags = r.Net_getDistinctTags();  // usa os métodos *Net_* que chamam Net_PacketTcp
+        System.out.println(tags);
+}
 
     private static void  networkRunner(){
 
@@ -77,8 +106,8 @@ public class Main {
        r.getReaderNet(hScanner,ip, port, mask, gateway); */
 
 
-        short[] HandVer = new short[1];
-        short[] SoftVer = new short[1];
+            short[] HandVer = new short[1];
+            short[] SoftVer = new short[1];
             byte[] ip = new byte[4];
             int[] port = new int[1];
             byte[] mask = new byte[4];
@@ -92,7 +121,14 @@ public class Main {
 //            ---- Start AutoMode (RS232) ----
 //
             Set<String> tags = r.Net_getDistinctTags();
-        System.out.println(tags);
+            System.out.println(tags);
+
+
+
+//            ---- Start AutoMode (RS232) ----
+////
+//            Set<String> tags = r.Net_getDistinctTags();
+//        System.out.println(tags);
 
 
 

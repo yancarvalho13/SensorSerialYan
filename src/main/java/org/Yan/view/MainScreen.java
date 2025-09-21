@@ -1,11 +1,10 @@
-package org.Durit.view;
+package org.Yan.view;
 
 import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.driver.Reader;
-import org.Durit.repo.ProdutoRepository;
+import org.Yan.driver.Reader;
+import org.Yan.repo.ProdutoRepository;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
-import org.springframework.stereotype.Component;
 
 import javax.swing.*;
 import javax.swing.border.TitledBorder;

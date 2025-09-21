@@ -1,4 +1,4 @@
-package org.Durit;
+package org.Yan;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

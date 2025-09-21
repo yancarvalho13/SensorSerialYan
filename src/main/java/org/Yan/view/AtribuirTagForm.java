@@ -1,10 +1,10 @@
-package org.Durit.view;
+package org.Yan.view;
 
 import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.Etiqueta;
-import org.Durit.Produto;
-import org.Durit.driver.Reader;
-import org.Durit.repo.ProdutoRepository;
+import org.Yan.Etiqueta;
+import org.Yan.Produto;
+import org.Yan.driver.Reader;
+import org.Yan.repo.ProdutoRepository;
 
 import javax.swing.*;
 import java.awt.*;

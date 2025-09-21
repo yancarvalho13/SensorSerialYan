@@ -1,7 +1,7 @@
-package org.Durit.view;
+package org.Yan.view;
 
-import org.Durit.Produto;
-import org.Durit.repo.ProdutoRepository;
+import org.Yan.Produto;
+import org.Yan.repo.ProdutoRepository;
 
 import javax.swing.*;
 import java.awt.*;

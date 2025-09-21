@@ -1,6 +1,6 @@
-package org.Durit.repo;
+package org.Yan.repo;
 
-import org.Durit.Produto;
+import org.Yan.Produto;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

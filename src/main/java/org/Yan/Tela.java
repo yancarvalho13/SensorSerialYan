@@ -1,7 +1,7 @@
-package org.Durit;
+package org.Yan;
 
 import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.driver.Reader;
+import org.Yan.driver.Reader;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;

@@ -1,4 +1,4 @@
-package org.Durit;
+package org.Yan;
 
 import jakarta.persistence.*;
 

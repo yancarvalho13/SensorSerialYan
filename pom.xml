@@ -14,8 +14,8 @@
         <tag/>
         <url/>
     </scm>
-    <groupId>org.Durit</groupId>
-    <artifactId>SensorSerialDurit</artifactId>
+    <groupId>org.Yan</groupId>
+    <artifactId>SensorSerialYan</artifactId>
     <version>1.0-SNAPSHOT</version>
 
     <properties>

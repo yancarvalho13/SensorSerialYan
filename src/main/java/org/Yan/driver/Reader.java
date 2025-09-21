@@ -1,4 +1,4 @@
-package org.Durit.driver;
+package org.Yan.driver;
 
 import com.fazecast.jSerialComm.SerialPort;
 
@@ -18,7 +18,10 @@ import java.util.*;
 public class Reader {
 
     // ===== Constantes do legado =====
-
+    private ServerSocket tcpServer;
+    private Socket tcpSocket;
+    private InputStream netIn;
+    private OutputStream netOut;
     public static final int _OK          = 0;
     public static final int _comm_error  = 131;
     public static final int _net_error   = 134;
@@ -31,6 +34,7 @@ public class Reader {
     static int TargetPort = 1713;
     private static final int TIMEOUT_MS     = 2000; // TimeOut do legado
     private static boolean bound = false;
+    private Transport transport = Transport.TCP; // use TCP enquanto estiver com ServerSocket/Socket
 
     // ===== Estado serial (jSerialComm) =====
     private SerialPort port;
@@ -53,6 +57,10 @@ public class Reader {
         try { if (in  != null) in.close();  } catch (IOException ignored) {}
         try { if (out != null) out.close(); } catch (IOException ignored) {}
         if (port != null) port.closePort();
+    }
+
+    public void setTransport(Transport transport) {
+        this.transport = transport;
     }
 
     // ---------- Métodos “espelho” do legado ----------
@@ -81,7 +89,7 @@ public class Reader {
             if (Address == 0) { cmd[0]=3; cmd[1]=15; cmd[2]=(byte)Mode; cmd[3]=0; }
             else              { cmd[0]=4; cmd[1]=15; cmd[2]=(byte)Address; cmd[3]=(byte)Mode; cmd[4]=0; }
 
-            if (!Net_Packet(hScanner, cmd, ret)) return _net_error;
+            if (!Net_PacketX(hScanner, cmd, ret)) return _net_error;
             if (ret[0] == (byte)0xF4) return (ret[1] & 0xFF); // erro
             return _OK;
         } catch (Exception e) {
@@ -917,7 +925,7 @@ public class Reader {
             for (int i = 0; i < m; i++) put[6 + i] = mask[i];
             put[6 + m] = 0;
 
-            if (!Net_Packet(hScanner, put, ret)) return _net_error;
+            if (!Net_PacketX(hScanner, put, ret)) return _net_error;
             if (ret[0] == (byte)0xF4)            return (ret[1] & 0xFF); // erro
 
             // Em Net_Packet, ret[0]=F0 e ret[1..] = DATA (cmd já foi removido).
@@ -966,7 +974,7 @@ public class Reader {
             put[3] = (byte) count;
             put[4] = 0;
 
-            if (!Net_Packet(hScanner, put, ret)) return _net_error;
+            if (!Net_PacketX(hScanner, put, ret)) return _net_error;
             if (ret[0] == (byte)0xF4)            return (ret[1] & 0xFF);
 
             // DATA(EDh): [ L EPC ][ L EPC ] ... (count grupos)
@@ -1040,4 +1048,122 @@ public class Reader {
             return -1;
         }
     }
+
+    public int Net_WirelessListen(int listenPort, int acceptTimeoutMs){
+        try{
+            if(tcpServer != null) tcpServer.close();
+            tcpServer = new ServerSocket(listenPort);
+            tcpServer.setReuseAddress(true);
+            tcpServer.setSoTimeout(acceptTimeoutMs);
+
+            System.out.println("Aguardando conexão");
+            tcpSocket = tcpServer.accept();
+            System.out.println("Conectado: "+ tcpSocket.getRemoteSocketAddress());
+            netIn = tcpSocket.getInputStream();
+            netOut = tcpSocket.getOutputStream();
+            return _OK;
+        }catch (Exception e){
+            e.printStackTrace();
+            return _net_error;
+        }
+    }
+
+    private boolean wirelessTcpPacket(int hScanner, byte[] cmd, byte[] res) {
+        try {
+            if (netIn == null || netOut == null) return false;
+
+            // montar TX: [0x40][len=cmd[0]][payload...][checksum]
+            byte[] send = new byte[(cmd[0] & 0xFF) + 2];
+            byte sum = 0x40;
+            send[0] = 0x40;
+            for (int i = 0; i < (cmd[0] & 0xFF); i++) { send[i+1] = cmd[i]; sum += send[i+1]; }
+            sum = (byte)(~sum + 1);
+            send[send.length - 1] = sum;
+
+            // envia
+            netOut.write(send);
+            netOut.flush();
+
+            // lê cabeçalho de 4 bytes: [F0/F4][len][cmdEco][...]
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+            byte[] head4 = readExact(netIn, 4, deadline);     // você já tem readExact(...)
+            byte boot = head4[0];
+            int  len  = head4[1] & 0xFF;                      // (cmd + dados)
+            int  rest = Math.max(0, len - 2);                 // bytes restantes após [len][cmdEco]
+            byte[] body = (rest > 0) ? readExact(netIn, rest, deadline) : new byte[0];
+
+            // montar receiveTemp “virtual” para reaproveitar a lógica:
+            byte[] rx = new byte[4 + body.length];
+            System.arraycopy(head4, 0, rx, 0, 4);
+            if (body.length > 0) System.arraycopy(body, 0, rx, 4, body.length);
+
+            // valida eco
+            if (rx[2] != cmd[1]) return false;               // cmd ecoado deve bater
+
+            if (boot == (byte)0xF0) {                        // sucesso
+                res[0] = (byte)0xF0;
+                int dataLen = Math.max(0, len - 1);
+                int copy = Math.min(dataLen, res.length - 1);
+                if (copy > 0) System.arraycopy(rx, 3, res, 1, copy);
+                return true;
+            } else if (boot == (byte)0xF4) {                 // erro
+                res[0] = (byte)0xF4;
+                res[1] = (len >= 2) ? rx[3] : 0;
+                return true;
+            }
+            return false;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
+        }
+    }
+
+    public void wireless_TcpClose (){
+        try { if (tcpSocket  != null) tcpSocket.close();   } catch (Exception ignore) {}
+        try { if (tcpServer != null) tcpServer.close(); } catch (Exception ignore) {}
+        tcpSocket = null; tcpServer = null; netIn = null; netOut = null;
+    }
+
+    public int wirelessGetReaderVersion(int hScanner,short[] wHardVer,short[] wSoftVer){
+        int res = _OK;
+        byte[] cmd = new byte[MAX_PACKET_LEN];
+        byte[] ret = new byte[MAX_PACKET_LEN];
+
+        try {
+            cmd[0] = 2;
+            cmd[1] = 2;
+            cmd[2] = 0;
+
+            if (!wirelessTcpPacket(hScanner, cmd, ret)) {
+                return _net_error;
+            }
+            ;
+            if (ret[0] == -12) {
+                return ret[1];
+            }
+
+
+            wHardVer[0] = (short) (ret[2] * 256 + ret[3]);
+            wSoftVer[0] = (short) (ret[4] * 256 + ret[5]);
+
+
+            res = _OK;
+        } catch (Exception e){
+            e.printStackTrace();
+            System.out.println("Falha ao obter versao do Leitor");
+            res = -1;
+        }
+        return res;
+
+    }
+    enum Transport { TCP, UDP }
+
+    private boolean Net_PacketX(int hScanner, byte[] cmd, byte[] res) {
+        if (transport == Transport.TCP) {
+            return wirelessTcpPacket(hScanner, cmd, res);
+        } else {
+            return Net_Packet(hScanner, cmd, res);
+        }
+    }
+
 }

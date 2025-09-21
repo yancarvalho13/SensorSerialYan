@@ -1,11 +1,9 @@
-package org.Durit.view;
+package org.Yan.view;
 
-import org.Durit.Produto;
-import org.Durit.repo.ProdutoRepository;
+import org.Yan.Produto;
+import org.Yan.repo.ProdutoRepository;
 
 import javax.swing.table.AbstractTableModel;
-import java.util.ArrayList;
-import java.util.List;
 
 public class TableModel extends AbstractTableModel {
     ProdutoRepository repository;
