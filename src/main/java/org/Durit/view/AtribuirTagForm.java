@@ -3,7 +3,7 @@ package org.Durit.view;
 import com.fazecast.jSerialComm.SerialPort;
 import org.Durit.Etiqueta;
 import org.Durit.Produto;
-import org.Durit.Reader;
+import org.Durit.driver.Reader;
 import org.Durit.repo.ProdutoRepository;
 
 import javax.swing.*;

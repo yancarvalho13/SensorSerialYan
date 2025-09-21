@@ -1,7 +1,7 @@
 package org.Durit.view;
 
 import com.fazecast.jSerialComm.SerialPort;
-import org.Durit.Reader;
+import org.Durit.driver.Reader;
 import org.Durit.repo.ProdutoRepository;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
@@ -13,7 +13,7 @@ import java.awt.*;
 import java.util.HashMap;
 import java.util.Map;
 
-@Component
+
 public class MainScreen extends JFrame {
     private ProdutoRepository produtoRepository;
     private JTabbedPane tabbedPane1;
@@ -23,6 +23,8 @@ public class MainScreen extends JFrame {
     private JScrollPane scrollPanel;
     private JButton atribuirTagButton;
     private JButton localizarProdutosButton;
+    private JComboBox portaComboBox;
+    private JButton conectarButton;
     private TableModel tableModel;
 
 
@@ -40,6 +42,29 @@ public class MainScreen extends JFrame {
         assert table1 != null;
         table1.setModel(tableModel);
         setContentPane(mainPanel);
+        SerialPort[] portas = SerialPort.getCommPorts();
+
+        for (SerialPort porta : portas){
+            portaComboBox.addItem(porta.getSystemPortName());
+        }
+
+
+        conectarButton.addActionListener(e -> {
+            conectarButton.setEnabled(false);
+            String porta = (String) portaComboBox.getSelectedItem();
+            SerialPort port = SerialPort.getCommPort(porta);
+            Reader reader = new Reader();
+            if(reader.open(port,115200)){
+                JOptionPane pane = new JOptionPane("Conectado com sucesso", JOptionPane.WARNING_MESSAGE, JOptionPane.DEFAULT_OPTION);
+                JDialog dialog = pane.createDialog("Aviso");
+                dialog.setAlwaysOnTop(true);
+                dialog.setVisible(true);
+                dialog.setLocationRelativeTo(this);
+                conectarButton.setEnabled(true);
+            }
+            new JOptionPane("Falha ao conectar").setVisible(true);
+            conectarButton.setEnabled(true);
+        });
 
         cadastrarProdutoButton.addActionListener(e -> {
             JFrame dialog = new JFrame();
@@ -59,37 +84,37 @@ public class MainScreen extends JFrame {
             dialog.setContentPane(new AtribuirTagForm(produtoRepository).$$$getRootComponent$$$());
         });
 
-        localizarProdutosButton.addActionListener(e ->{
-        localizarProdutosButton.setEnabled(false);
+        localizarProdutosButton.addActionListener(e -> {
+            localizarProdutosButton.setEnabled(false);
 
-        new SwingWorker<Map<String, String>, Void>() {
-            @Override
-            protected Map<String, String> doInBackground() {
-                return iniciarLeitura();           // faz AutoMode 1 → lê → stop
-            }
-
-            @Override
-            protected void done() {
-                try {
-                    Map<String, String> mapa = get();
-                     produtoRepository.findAll().forEach(p -> {
-                                 if (!mapa.containsValue(p.getEtiqueta().getTag())) {
-                                     p.setSetor("Fora do Setor");
-                                 }else{
-                                     p.setSetor("Erosão");
-                                 }
-
-                                 produtoRepository.save(p);
-                     });
-                    tableModel.reload();
-                } catch (Exception ex) {
-                    JOptionPane.showMessageDialog(mainPanel, "Erro lendo tag: " + ex.getMessage(),
-                            "Erro", JOptionPane.ERROR_MESSAGE);
-                } finally {
-                    localizarProdutosButton.setEnabled(true);
+            new SwingWorker<Map<String, String>, Void>() {
+                @Override
+                protected Map<String, String> doInBackground() {
+                    return iniciarLeitura();           // faz AutoMode 1 → lê → stop
                 }
-            }
-        }.execute();
+
+                @Override
+                protected void done() {
+                    try {
+                        Map<String, String> mapa = get();
+                        produtoRepository.findAll().forEach(p -> {
+                            if (!mapa.containsValue(p.getEtiqueta().getTag())) {
+                                p.setSetor("Fora do Setor");
+                            } else {
+                                p.setSetor("Erosão");
+                            }
+
+                            produtoRepository.save(p);
+                        });
+                        tableModel.reload();
+                    } catch (Exception ex) {
+                        JOptionPane.showMessageDialog(mainPanel, "Erro lendo tag: " + ex.getMessage(),
+                                "Erro", JOptionPane.ERROR_MESSAGE);
+                    } finally {
+                        localizarProdutosButton.setEnabled(true);
+                    }
+                }
+            }.execute();
         });
     }
 
@@ -152,6 +177,21 @@ public class MainScreen extends JFrame {
         final JPanel panel3 = new JPanel();
         panel3.setLayout(new com.intellij.uiDesigner.core.GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1));
         tabbedPane1.addTab("Untitled", panel3);
+        final JPanel panel4 = new JPanel();
+        panel4.setLayout(new com.intellij.uiDesigner.core.GridLayoutManager(3, 2, new Insets(0, 0, 0, 0), -1, -1));
+        panel3.add(panel4, new com.intellij.uiDesigner.core.GridConstraints(0, 0, 1, 1, com.intellij.uiDesigner.core.GridConstraints.ANCHOR_CENTER, com.intellij.uiDesigner.core.GridConstraints.FILL_BOTH, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_SHRINK | com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_GROW, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_SHRINK | com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_GROW, null, null, null, 0, false));
+        portaComboBox = new JComboBox();
+        final DefaultComboBoxModel defaultComboBoxModel1 = new DefaultComboBoxModel();
+        portaComboBox.setModel(defaultComboBoxModel1);
+        panel4.add(portaComboBox, new com.intellij.uiDesigner.core.GridConstraints(1, 0, 1, 1, com.intellij.uiDesigner.core.GridConstraints.ANCHOR_WEST, com.intellij.uiDesigner.core.GridConstraints.FILL_HORIZONTAL, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_GROW, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+        final com.intellij.uiDesigner.core.Spacer spacer1 = new com.intellij.uiDesigner.core.Spacer();
+        panel4.add(spacer1, new com.intellij.uiDesigner.core.GridConstraints(1, 1, 1, 1, com.intellij.uiDesigner.core.GridConstraints.ANCHOR_CENTER, com.intellij.uiDesigner.core.GridConstraints.FILL_HORIZONTAL, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_WANT_GROW, 1, null, null, null, 0, false));
+        final JLabel label2 = new JLabel();
+        label2.setText("Selecionar Porta");
+        panel4.add(label2, new com.intellij.uiDesigner.core.GridConstraints(0, 0, 1, 1, com.intellij.uiDesigner.core.GridConstraints.ANCHOR_WEST, com.intellij.uiDesigner.core.GridConstraints.FILL_NONE, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_FIXED, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+        conectarButton = new JButton();
+        conectarButton.setText("conectar");
+        panel4.add(conectarButton, new com.intellij.uiDesigner.core.GridConstraints(2, 0, 1, 1, com.intellij.uiDesigner.core.GridConstraints.ANCHOR_CENTER, com.intellij.uiDesigner.core.GridConstraints.FILL_HORIZONTAL, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_SHRINK | com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_CAN_GROW, com.intellij.uiDesigner.core.GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
     }
 
     /**
