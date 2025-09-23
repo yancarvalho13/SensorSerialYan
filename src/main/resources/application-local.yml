@@ -12,3 +12,9 @@ spring:
     properties:
         hibernate.format_sql: true
         hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
+  spring:
+    rsocket:
+      server:
+        port: 8080       # porta do RSocket
+        address: 0.0.0.0     # escuta em todas as interfaces (não só localhost)
+        transport: tcp

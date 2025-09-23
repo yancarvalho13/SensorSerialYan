@@ -2,12 +2,15 @@ package org.Yan;
 
 import org.Yan.driver.Reader;
 
+import java.net.Socket;
 import java.util.Set;
 
 public class Main {
     public static void main(String[] args) {
+
 //        SerialPortRunner();
-        WirelessRunner();
+            ProxyRunner();
+//        WirelessRunner();
 //        try(ServerSocket server = new ServerSocket(60000)){
 //            Socket socket = server.accept();
 //            System.out.println("conectado: " + socket.getRemoteSocketAddress());
@@ -26,6 +29,24 @@ public class Main {
 //        }
 
 
+    }
+
+    private static void ProxyRunner(){
+        try(Socket socket = new Socket("192.168.2.1", 6000 )){
+            Reader r = new Reader();
+            r.setNetIn(socket.getInputStream());
+            r.setNetOut(socket.getOutputStream());
+            short[] hv = new short[1], sv = new short[1];
+            r.wirelessGetReaderVersion(0, hv, sv);   // internamente chame Net_PacketTcp
+            System.out.println("HW=" + hv[0] + "  SW=" + sv[0]);
+            Set<String> tags = r.Net_getDistinctTags();  // usa os métodos *Net_* que chamam Net_PacketTcp
+            System.out.println(tags);;
+
+
+
+        }catch (Exception e){
+            e.printStackTrace();
+        }
     }
 
     private static void WirelessRunner() {

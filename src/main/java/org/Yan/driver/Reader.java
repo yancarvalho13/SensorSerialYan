@@ -81,6 +81,7 @@ public class Reader {
         return res;
     }
 
+
     public int Net_AutoMode(int hScanner, int Mode, int Address) {
         int res = 0;
         byte[] cmd = new byte[MAX_PACKET_LEN];
@@ -107,6 +108,14 @@ public class Reader {
             }
         } catch (Exception e) { e.printStackTrace(); }
         return 0;
+    }
+
+    public void setNetIn(InputStream netIn) {
+        this.netIn = netIn;
+    }
+
+    public void setNetOut(OutputStream netOut) {
+        this.netOut = netOut;
     }
 
     public int ReadBasicParam(int hScanner, byte[] pParam, int Address) {
@@ -701,7 +710,7 @@ public class Reader {
 
     public Set<String> Net_getDistinctTags() {
         final int hScanner = 0, Address = 0;
-        final long until = System.currentTimeMillis() + 600; // ~0.6s de varredura
+        final long until = System.currentTimeMillis() + 1000; // ~0.6s de varredura
         Set<String> tags = new HashSet<>();
 
         // garante que não estamos em push por rede enquanto fazemos polling
@@ -726,6 +735,7 @@ public class Reader {
                         epc.append(String.format("%02X", IDBuffer[idx + 1 + k]));
                     }
                     String tag = epc.toString();
+                    System.out.println(tag);
                     if (!tag.isEmpty()) tags.add(tag);
 
                     idx += bytes;
@@ -1049,6 +1059,9 @@ public class Reader {
         }
     }
 
+    public void tryProxy (){
+
+    }
     public int Net_WirelessListen(int listenPort, int acceptTimeoutMs){
         try{
             if(tcpServer != null) tcpServer.close();
@@ -1133,6 +1146,7 @@ public class Reader {
             cmd[0] = 2;
             cmd[1] = 2;
             cmd[2] = 0;
+//        WirelessRunner();
 
             if (!wirelessTcpPacket(hScanner, cmd, ret)) {
                 return _net_error;
