@@ -1,12 +1,12 @@
 package org.Yan.driver;
 
-import java.io.EOFException;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.*;
 import java.net.Socket;
-import java.util.HashSet;
-import java.util.Set;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class WirelessReader {
     private InputStream inputStream;
@@ -16,9 +16,9 @@ public class WirelessReader {
     public static final int _comm_error  = 131;
     public static final int _net_error   = 134;
     private static final int MAX_PACKET_LEN = 262;
-    private static final int TIMEOUT_MS     = 2000; // TimeOut do legado
-
-
+    private static final int TIMEOUT_MS     = 200000; // TimeOut do legado
+    private List<Byte> msg = new ArrayList<>();
+    private final ByteArrayOutputStream btOutGlobal = new ByteArrayOutputStream(4096);
 
     public WirelessReader(Socket socket) {
         this.socket = socket;
@@ -28,6 +28,31 @@ public class WirelessReader {
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+    }
+
+
+
+    public synchronized void clearBtOut() {
+        btOutGlobal.reset();
+    }
+
+    /** Retorna uma CÓPIA dos bytes concatenados (thread-safe) */
+    public synchronized byte[] getBtOut() {
+        return btOutGlobal.toByteArray();
+    }
+
+    private static int contarGrupos(byte[] buffer, int pos, int len) {
+        int end = pos + len;
+        int count = 0;
+        while (pos < end) {
+            int L = buffer[pos] & 0xFF;
+            if (L == 0) break;
+            int bytes = 1 + L * 2;
+            if (pos + bytes > end) break; // incompleto
+            pos += bytes;
+            count++;
+        }
+        return count;
     }
 
     public int wirelessGetReaderVersion(int hScanner,short[] wHardVer,short[] wSoftVer){
@@ -82,7 +107,8 @@ public class WirelessReader {
 
             // lê cabeçalho de 4 bytes: [F0/F4][len][cmdEco][...]
             long deadline = System.currentTimeMillis() + TIMEOUT_MS;
-            byte[] head4 = readExact(inputStream, 4, deadline);     // você já tem readExact(...)
+            byte[] head4 = readExact(inputStream, 4, deadline);
+            System.out.println(head4[0]+", "+head4[1] +", "+ head4[2]+", "+head4[3]);// você já tem readExact(...)
             byte boot = head4[0];
             int  len  = head4[1] & 0xFF;                      // (cmd + dados)
             int  rest = Math.max(0, len - 2);                 // bytes restantes após [len][cmdEco]
@@ -133,40 +159,89 @@ public class WirelessReader {
 
     public Set<String> Net_getDistinctTags() {
         final int hScanner = 0, Address = 0;
-        final long until = System.currentTimeMillis() + 1000; // ~0.6s de varredura
         Set<String> tags = new HashSet<>();
 
-        // garante que não estamos em push por rede enquanto fazemos polling
-        try { Net_AutoMode(hScanner, 0, Address); } catch (Exception ignore) {}
+        try {
+            // garante que não estamos em push por rede enquanto fazemos polling
+            Net_AutoMode(hScanner, 0, Address);
 
-        byte[] IDBuffer = new byte[1024];
-        int[]  nCounter = new int[1];
+            // parâmetros da leitura (EPC, sem máscara)
+            final int mem = 1, ptr = 0, len = 0;
+            byte[] mask = new byte[0];
 
-        while (System.currentTimeMillis() < until) {
-            // mem=1 (EPC), ptrBits=0, lenBits=0, sem máscara
-            int r = Net_EPC1G2_ReadLabelID(hScanner, 1, 0, 0, new byte[0], IDBuffer, nCounter);
-            if (r == _OK && nCounter[0] > 0) {
-                int idx = 0;
-                for (int i = 0; i < nCounter[0]; i++) {
-                    if (idx >= IDBuffer.length) break;
-                    int L = IDBuffer[idx] & 0xFF;              // tamanho em WORDS
-                    int bytes = 1 + L * 2;                      // [L][EPC...]
-                    if (L == 0 || idx + bytes > IDBuffer.length) break;
+            // buffers e metadados (LEGADO)
+            byte[] firstBuf = new byte[4094];
+            int[]  nCounter = new int[1];   // total de grupos reportados pelo leitor
+            int[]  IDlen    = new int[1];   // bytes válidos copiados da 1ª página (<=8 grupos)
 
-                    StringBuilder epc = new StringBuilder(L * 4);
-                    for (int k = 0; k < L * 2; k++) {
-                        epc.append(String.format("%02X", IDBuffer[idx + 1 + k]));
-                    }
-                    String tag = epc.toString();
-                    System.out.println(tag);
-                    if (!tag.isEmpty()) tags.add(tag);
+            // 1) primeira página via EEh (LEGADO)
+            int r = Net_EPC1G2_ListTagID(hScanner, mem, ptr, len, mask, firstBuf, nCounter, IDlen);
+            if (r != _OK) return tags;
 
-                    idx += bytes;
-                }
+            // parse dos grupos retornados na 1ª página
+            int got = parseListBuffer(firstBuf, IDlen[0], tags);
+
+            // 2) se houver mais que 8, paginação via EDh (LEGADO)
+            int total = nCounter[0];              // total de grupos (tags) reportados
+            int start = got;                      // índice de grupo a partir do qual vamos buscar
+            int left  = Math.max(0, total - got); // quantos grupos faltam
+
+            final int ED_PAGE = 10; // EDh retorna até 10 grupos por chamada
+
+            while (left > 0) {
+                int fetch = Math.min(ED_PAGE, left);
+                byte[] pageBuf = new byte[1024];
+                int[]  pageLen = new int[1];
+
+                r = Net_EPC1G2_GetIDList(hScanner, pageBuf, start, fetch, pageLen);
+                if (r != _OK) break;
+
+                parseListBuffer(pageBuf, pageLen[0], tags);
+
+                start += fetch;   // avança por "grupos"
+                left  -= fetch;
             }
-            try { Thread.sleep(50); } catch (InterruptedException ignore) {}
+        } catch (Exception e) {
+            e.printStackTrace();
         }
+
         return tags;
+    }
+
+    /** Lê uma sequência de grupos no formato [L][EPC L*2 bytes]...[L=0/EOF] e adiciona ao Set */
+    private static int parseListBuffer(byte[] buf, int validLen, Set<String> out) {
+        int pos = 0, groups = 0;
+        while (pos < validLen) {
+            int L = buf[pos] & 0xFF;
+            if (L == 0) break;
+            int bytes = 1 + L * 2;
+            if (pos + bytes > validLen) break; // incompleto, para
+
+            // monta EPC em hex
+            StringBuilder epc = new StringBuilder(L * 4);
+            for (int i = 0; i < L * 2; i++) {
+                epc.append(String.format("%02X", buf[pos + 1 + i]));
+            }
+            String tag = epc.toString();
+
+            // filtros básicos (iguais à sua lógica)
+            if (!tag.isEmpty() && !tag.contains("000000000000")) {
+                // se quiser o mesmo crivo estrito de 24 hex e começando com E2, habilite:
+                // if (tag.length() == 24 && tag.startsWith("E2")) {
+                //     out.add(tag);
+                // } else {
+                //     System.out.println("Tag quebrada: " + tag);
+                // }
+                out.add(tag);
+            }
+
+            pos += bytes;
+            groups++;
+        }
+        return groups;
+    }
+    public List<Byte> getMsg() {
+        return msg;
     }
 
     public int Net_AutoMode(int hScanner, int Mode, int Address) {
@@ -187,144 +262,400 @@ public class WirelessReader {
     }
 
     // Agregador — chama EEh e, se M>8, pagina com EDh até completar.
-    public int Net_EPC1G2_ReadLabelID(int hScanner, int mem, int ptrBits, int lenBits,
-                                      byte[] mask, byte[] IDBuffer, int[] nCounter) {
+    private  int Net_EPC1G2_ListTagID(int hScanner, int mem, int ptr, int len, byte[] mask, byte[] btID, int[] nCounter, int[] IDlen) {
+        int res = _OK;
+        byte[] put = new byte[MAX_PACKET_LEN];
+        byte[] get = new byte[MAX_PACKET_LEN];
+
         try {
-            if (IDBuffer == null || nCounter == null || nCounter.length == 0) return -1;
-
-            int[] IDlen  = new int[1];
-            int[] extraL = new int[1];
-            byte[] extra = new byte[Math.max(1024, IDBuffer.length)];
-
-            nCounter[0] = 0;
-
-            // 1) primeira página (até 8) via EEh
-            int r = Net_EPC1G2_ListTagID(hScanner, mem, ptrBits, lenBits, mask, IDBuffer, nCounter, IDlen);
-            if (r != _OK) return r;
-
-            // 2) se houver mais de 8, buscar páginas EDh
-            int total = nCounter[0];
-            if (total > 8) {
-                int out = IDlen[0];
-                int fullPages = total / 8;
-                int rem       = total % 8;
-
-                // páginas 1..(fullPages-1), cada uma com 8
-                for (int p = 1; p < fullPages; p++) {
-                    r = Net_EPC1G2_GetIDList(hScanner, extra, p * 8, 8, extraL);
-                    if (r != _OK) return r;
-                    if (out + extraL[0] > IDBuffer.length) break;
-                    System.arraycopy(extra, 0, IDBuffer, out, extraL[0]);
-                    out += extraL[0];
+            int m;
+            if (len == 0) {
+                m = 0;
+            } else {
+                m = len / 8;
+                if (len % 8 != 0) {
+                    ++m;
                 }
-                // resto (se houver)
-                if (rem > 0) {
-                    r = Net_EPC1G2_GetIDList(hScanner, extra, fullPages * 8, rem, extraL);
-                    if (r != _OK) return r;
-                    if (out + extraL[0] <= IDBuffer.length) {
-                        System.arraycopy(extra, 0, IDBuffer, out, extraL[0]);
+            }
+
+            put[0] = (byte)(m + 6);
+            put[1] = -18;
+            put[2] = (byte)mem;
+            put[3] = (byte)(ptr >> 8);
+            put[4] = (byte)ptr;
+            put[5] = (byte)len;
+
+            int i;
+            for(i = 0; i < m; ++i) {
+                put[6 + i] = mask[i];
+            }
+
+            put[6 + i] = 0;
+            if (!wirelessTcpPacket(hScanner, put, get)) {
+                return _net_error;
+            }
+
+            if (get[0] == -12) {
+                return get[1];
+            }
+
+            nCounter[0] = get[1];
+            int last = 2;
+            if (nCounter[0] <= 8) {
+                for(int var19 = 0; var19 < nCounter[0]; ++var19) {
+                    int next = get[last] * 2 + 1;
+                    System.arraycopy(get, last, btID, last - 2, next);
+                    last += next;
+                }
+            } else {
+                for(int var18 = 0; var18 < 8; ++var18) {
+                    int next = get[last] * 2 + 1;
+                    System.arraycopy(get, last, btID, last - 2, next);
+                    last += next;
+                }
+            }
+
+            IDlen[0] = last - 2;
+            res = _OK;
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.out.println("Exception of Net_EPC1G2_ListTagID:\n");
+            res = -1;
+        }
+
+        return res;
+    }
+
+    private  int Net_EPC1G2_GetIDList(int hScanner, byte[] btID, int stNum, int nCounter, int[] IDlen) {
+        int res = _OK;
+        byte[] put = new byte[MAX_PACKET_LEN];
+        byte[] get = new byte[MAX_PACKET_LEN];
+
+        try {
+            put[0] = 4;
+            put[1] = -19;
+            put[2] = (byte)stNum;
+            put[3] = (byte)nCounter;
+            put[4] = 0;
+            if (!wirelessTcpPacket(hScanner, put, get)) {
+                return _net_error;
+            }
+
+            if (get[0] == -12) {
+                return get[1];
+            }
+
+            int last = 2;
+
+            for(int i = 0; i < nCounter; ++i) {
+                int next = get[last] * 2 + 1;
+                System.arraycopy(get, last, btID, last - 2, next);
+                last += next;
+            }
+
+            IDlen[0] = last - 2;
+            res = _OK;
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.out.println("Exception of Net_EPC1G2_GetIDList:\n");
+            res = -1;
+        }
+
+        return res;
+    }
+
+    public  int Net_EPC1G2_ReadLabelID(int hScanner, int mem, int ptr, int len, byte[] mask, byte[] IDBuffer, int[] nCounter) {
+        int res = _OK;
+
+        try {
+            int i = 0;
+            int j = 0;
+            int k = 0;
+            int[] l = new int[2];
+            int[] IDlen = new int[2];
+            byte[] lpbuffer = new byte[1024];
+            nCounter[0] = 0;
+            res = Net_EPC1G2_ListTagID(hScanner, mem, ptr, len, mask, IDBuffer, nCounter, IDlen);
+            if (res != _OK) {
+                return res;
+            }
+
+            if (nCounter[0] > 8) {
+                j = nCounter[0] / 8;
+                k = nCounter[0] - j * 8;
+
+                for(int e = 1; e < j; ++e) {
+                    res = Net_EPC1G2_GetIDList(hScanner, lpbuffer, e * 8, 8, l);
+                    if (res != _OK) {
+                        return res;
+                    }
+
+                    IDlen[0] += l[0];
+                }
+
+                if (k != 0) {
+                    res = Net_EPC1G2_GetIDList(hScanner, lpbuffer, j * 8, k, l);
+                    if (res != _OK) {
+                        return res;
                     }
                 }
             }
-            return _OK;
+
+            res = _OK;
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.out.println("Exception of Net_EPC1G2_ReadLabelID:\n");
+            res = -1;
+        }
+
+        return res;
+    }
+/**
+ * Configura o intervalo de leitura no modo automático
+ * @param hScanner identificador do scanner (geralmente 0)
+ * @param intervalValue valor do intervalo:
+ *                     0 = 10ms
+ *                     1 = 20ms
+ *                     2 = 30ms (padrão)
+ *                     3 = 50ms
+ *                     4 = 100ms
+ * @return código de resultado (0 = sucesso)
+ */
+public int setReadInterval(int hScanner, int intervalValue) {
+    if (intervalValue < 0 || intervalValue > 4) {
+        System.out.println("Valor de intervalo inválido. Use: 0=10ms, 1=20ms, 2=30ms, 3=50ms, 3=100ms");
+        return -1;
+    }
+    
+    int Address = 0;  // Endereço padrão
+    byte[] autoParams = new byte[32];
+    
+    // 1. Primeiro lemos os parâmetros atuais
+    byte[] cmd = new byte[MAX_PACKET_LEN];
+    byte[] ret = new byte[MAX_PACKET_LEN];
+    
+    // Comando para ler AutoParam
+    cmd[0] = 2;
+    cmd[1] = 20;  // Comando 0x14 (20) = ReadAutoParam
+    cmd[2] = 0;
+    
+    if (!wirelessTcpPacket(hScanner, cmd, ret)) {
+        System.out.println("Falha ao ler parâmetros automáticos");
+        return _net_error;
+    }
+    
+    if (ret[0] == (byte)0xF4) {
+        System.out.println("Erro ao ler parâmetros: " + (ret[1] & 0xFF));
+        return (ret[1] & 0xFF);
+    }
+    
+    // Copiar os parâmetros recebidos
+    System.arraycopy(ret, 1, autoParams, 0, 32);
+    
+    // 2. Modificar o byte 4 (índice 3) que controla o intervalo de leitura
+    autoParams[3] = (byte)intervalValue;
+    
+    // 3. Escrever os parâmetros de volta
+    cmd = new byte[MAX_PACKET_LEN];
+    ret = new byte[MAX_PACKET_LEN];
+    
+    cmd[0] = (byte)(2 + 32);  // Length = 2 + 32 bytes de parâmetros
+    cmd[1] = 19;  // Comando 0x13 (19) = WriteAutoParam
+    System.arraycopy(autoParams, 0, cmd, 2, 32);
+    cmd[2 + 32] = 0;
+    
+    if (!wirelessTcpPacket(hScanner, cmd, ret)) {
+        System.out.println("Falha ao escrever parâmetros automáticos");
+        return _net_error;
+    }
+    
+    if (ret[0] == (byte)0xF4) {
+        System.out.println("Erro ao escrever parâmetros: " + (ret[1] & 0xFF));
+        return (ret[1] & 0xFF);
+    }
+    
+    System.out.println("Intervalo de leitura configurado com sucesso para: " + 
+                      (intervalValue == 0 ? "10ms" : 
+                       intervalValue == 1 ? "20ms" : 
+                       intervalValue == 2 ? "30ms" : 
+                       intervalValue == 3 ? "50ms" : "100ms"));
+    
+    return _OK;
+}
+
+    /**
+     * Método que lê múltiplos lotes de tags e usa multithreading para processamento
+     */
+    public Set<String> Net_getDistinctTagsBatchedMultithread(int numBatches) {
+        final int hScanner = 0, Address = 0;
+        final ConcurrentHashMap<String, Boolean> allTags = new ConcurrentHashMap<>();
+        final ExecutorService executor = Executors.newFixedThreadPool(
+                Math.max(2, Runtime.getRuntime().availableProcessors() - 1)
+        );
+
+        try {
+            // Garantir modo correto
+            Net_AutoMode(hScanner, 0, Address);
+
+            // Ler em vários lotes
+            for (int batch = 0; batch < numBatches; batch++) {
+                byte[] IDBuffer = new byte[4096];
+                int[] nCounter = new int[1];
+
+                // Limpar o buffer
+                Arrays.fill(IDBuffer, (byte)0);
+
+                // Leitura
+                int r = Net_EPC1G2_ReadLabelID(hScanner, 1, 0, 0, new byte[0], IDBuffer, nCounter);
+
+                if (r == _OK && nCounter[0] > 0) {
+                    System.out.println("Lote " + (batch + 1) + ": Detectadas " + nCounter[0] + " tags");
+
+                    // Criar uma cópia do buffer para processamento assíncrono
+                    final byte[] bufferCopy = Arrays.copyOf(IDBuffer, IDBuffer.length);
+                    final int tagCount = nCounter[0];
+
+                    // Submeter o lote para processamento em segundo plano
+                    executor.submit(() -> {
+                        // Processar as tags deste lote
+                        processTagsToMap(bufferCopy, tagCount, allTags);
+                    });
+
+                    // Esperar um pouco entre lotes para evitar sobrecarregar o dispositivo
+                    Thread.sleep(500);
+                } else {
+                    // Se não encontrou tags neste lote, não precisa continuar
+                    if (batch > 0) break;
+                }
+            }
+
+            // Aguardar todas as threads concluírem
+            executor.shutdown();
+            executor.awaitTermination(5, TimeUnit.SECONDS);
 
         } catch (Exception e) {
             e.printStackTrace();
-            return -1;
+        } finally {
+            if (executor != null && !executor.isShutdown()) {
+                executor.shutdownNow();
+            }
+        }
+
+        return new HashSet<>(allTags.keySet());
+    }
+
+    /**
+     * Processa as tags de um buffer e adiciona ao mapa concorrente
+     */
+    private void processTagsToMap(byte[] buffer, int numTags, ConcurrentHashMap<String, Boolean> tagsMap) {
+        int idx = 0;
+        int tagsProcessed = 0;
+
+        while (idx < buffer.length && tagsProcessed < numTags) {
+            if (buffer[idx] == 0) break;
+
+            int L = buffer[idx] & 0xFF;
+
+            if (L < 1 || L > 31 || idx + 1 + L * 2 > buffer.length) {
+                idx++;
+                continue;
+            }
+
+            StringBuilder epc = new StringBuilder(L * 4);
+            for (int k = 0; k < L * 2; k++) {
+                epc.append(String.format("%02X", buffer[idx + 1  + k]));
+            }
+
+            char a = 'E';
+            char b = '2';
+            String tag = epc.toString();
+            System.out.println("Tag: "+ tag);
+            if (!tag.isEmpty() && !tag.contains("000000000000")) {
+
+                    tagsMap.put(tag, true);
+
+            }
+
+            idx += 1 + L * 2;
+            tagsProcessed++;
         }
     }
 
 
-    public int Net_EPC1G2_ListTagID(int hScanner, int mem, int ptrBits, int lenBits,
-                                    byte[] mask, byte[] IDBuffer, int[] nCounter, int[] IDlen) {
-        byte[] put = new byte[MAX_PACKET_LEN];
+    /**
+     * Lê o bloco de 32 bytes de parâmetros básicos de operação do leitor.
+     *
+     * @param hScanner O identificador do scanner (geralmente 0).
+     * @return Um array de 32 bytes com os parâmetros em caso de sucesso, ou null em caso de falha.
+     */
+    public byte[] readParams(int hScanner) {
+        System.out.println("Iniciando leitura dos parâmetros básicos do leitor...");
+        byte[] cmd = new byte[MAX_PACKET_LEN];
         byte[] ret = new byte[MAX_PACKET_LEN];
+
         try {
-            // bytes de máscara (ceil(lenBits/8)); se lenBits==0, sem máscara
-            int m = (lenBits <= 0) ? 0 : (lenBits / 8 + ((lenBits % 8 != 0) ? 1 : 0));
-            if (mask == null) mask = new byte[0];
-            if (m > mask.length) m = mask.length;
+            // Montando o comando 06H (Read Param)
+            // Baseado no manual e no seu código existente: [comprimento], [comando], [terminador nulo]
+            cmd[0] = 2;       // Comprimento do payload (comando + terminador)
+            cmd[1] = 0x06;    // Comando 06H: Read Param
+            cmd[2] = 0;
 
-            // 『40H  (m+6)  EEH  mem  ptrHi  ptrLo  lenBits  mask[m]  00』
-            put[0] = (byte) (m + 6);
-            put[1] = (byte) 0xEE;
-            put[2] = (byte) mem;
-            put[3] = (byte) (ptrBits >> 8);
-            put[4] = (byte) (ptrBits);
-            put[5] = (byte) (lenBits);
-            for (int i = 0; i < m; i++) put[6 + i] = mask[i];
-            put[6 + m] = 0;
-
-            if (!wirelessTcpPacket(hScanner, put, ret)) return _net_error;
-            if (ret[0] == (byte)0xF4)            return (ret[1] & 0xFF); // erro
-
-            // Em Net_Packet, ret[0]=F0 e ret[1..] = DATA (cmd já foi removido).
-            // DATA(EEh): [M][ L EPC ][ L EPC ] ...
-            int posData = 1;
-            int out     = 0;
-
-            int M = ret[posData] & 0xFF;
-            nCounter[0] = M;
-            posData++;
-
-            int maxTags = Math.min(M, 8);
-            for (int i = 0; i < maxTags; i++) {
-                int L = ret[posData] & 0xFF;          // comprimento em WORDS
-                int bytes = 1 + L * 2;                // L + EPC(L*2 bytes)
-                if (posData + bytes > ret.length) break;
-                if (out + bytes > IDBuffer.length) break;
-
-                System.arraycopy(ret, posData, IDBuffer, out, bytes);
-                posData += bytes;
-                out     += bytes;
+            if (!wirelessTcpPacket(hScanner, cmd, ret)) {
+                System.out.println("Falha na comunicação ao tentar ler os parâmetros.");
+                return null; // Retorna nulo em caso de erro de rede/comunicação
             }
-            IDlen[0] = out;
-            return _OK;
+
+            // Verifica se o dispositivo retornou um código de erro
+            if (ret[0] == (byte)0xF4) {
+                System.out.println("O leitor retornou um erro ao ler parâmetros: " + (ret[1] & 0xFF));
+                return null; // Retorna nulo em caso de erro do dispositivo
+            }
+
+            // Se chegamos aqui, a operação foi um sucesso (ret[0] == 0xF0)
+            // O manual diz que a resposta contém 32 bytes de dados.
+            byte[] params = new byte[32];
+
+            // Os dados começam no segundo byte da resposta (`ret[1]`),
+            // pois o primeiro é o status `F0H`.
+            System.arraycopy(ret, 1, params, 0, 32);
+
+            System.out.println("Parâmetros lidos com sucesso.");
+            return params;
 
         } catch (Exception e) {
             e.printStackTrace();
-            return -1;
+            return null;
         }
     }
 
-    public int Net_EPC1G2_GetIDList(int hScanner, byte[] btOut, int stNum, int count, int[] IDlen) {
-        byte[] put = new byte[MAX_PACKET_LEN];
-        byte[] ret = new byte[MAX_PACKET_LEN];
-        try {
-            if (count < 1) { IDlen[0] = 0; return _OK; }
-            if (btOut == null) btOut = new byte[0];
-
-            // 『40H  04H  EDH  stNum  count  00』
-            put[0] = 4;
-            put[1] = (byte) 0xED;
-            put[2] = (byte) stNum;
-            put[3] = (byte) count;
-            put[4] = 0;
-
-            if (!wirelessTcpPacket(hScanner, put, ret)) return _net_error;
-            if (ret[0] == (byte)0xF4)            return (ret[1] & 0xFF);
-
-            // DATA(EDh): [ L EPC ][ L EPC ] ... (count grupos)
-            int posData = 1;
-            int out     = 0;
-
-            for (int i = 0; i < count; i++) {
-                if (posData >= ret.length) break;
-                int L = ret[posData] & 0xFF;
-                int bytes = 1 + L * 2;
-                if (posData + bytes > ret.length) break;
-                if (out + bytes > btOut.length) break;
-
-                System.arraycopy(ret, posData, btOut, out, bytes);
-                posData += bytes;
-                out     += bytes;
-            }
-            IDlen[0] = out;
-            return _OK;
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return -1;
+    /**
+     * Imprime os parâmetros de operação de forma legível, com base no array de 32 bytes.
+     * @param params O array de 32 bytes retornado pela função readParams.
+     */
+    public void printParams(byte[] params) {
+        if (params == null || params.length < 32) {
+            System.out.println("Array de parâmetros inválido ou nulo.");
+            return;
         }
+
+        System.out.println("--- Parâmetros Atuais do Leitor ---");
+        // Usamos '& 0xFF' para garantir que o valor do byte seja exibido como um número de 0 a 255.
+
+        // O manual usa base 1, nosso array usa base 0. Ex: Byte 1 é índice 0.
+        System.out.println("Byte  1 (Índice  0) - BaudRate: " + (params[0] & 0xFF));
+        System.out.println("Byte  2 (Índice  1) - Potência de Transmissão (0-63): " + (params[1] & 0xFF));
+        System.out.println("Byte  6 (Índice  5) - Modo de Trabalho (0=Auto, 1=Comando): " + (params[5] & 0xFF));
+        System.out.println("Byte  7 (Índice  6) - Endereço RS485: " + (params[6] & 0xFF));
+        System.out.println("Byte  8 (Índice  7) - Máx. Tags por Leitura: " + (params[7] & 0xFF));
+        System.out.println("Byte  9 (Índice  8) - Tipo de Tag (4=G2): " + (params[8] & 0xFF));
+        System.out.println("Byte 10 (Índice 9) - Duração da leitura da tag: " + (params[9 & 0xFF]));
+        System.out.println("Byte 11 (Índice 10) - Read Times (M): " + (params[10] & 0xFF));
+        System.out.println("Byte 12 (Índice 11) - Buzzer Ativado (1=Sim, 0=Não): " + (params[11] & 0xFF));
+
+        // Exemplo de como ler um parâmetro de múltiplos bytes (IP)
+        String ipAddress = (params[12] & 0xFF) + "." + (params[13] & 0xFF) + "." + (params[14] & 0xFF) + "." + (params[15] & 0xFF);
+        System.out.println("Bytes 13-16 (Índices 12-15) - Endereço IP: " + ipAddress);
+
+        System.out.println("------------------------------------");
     }
 }

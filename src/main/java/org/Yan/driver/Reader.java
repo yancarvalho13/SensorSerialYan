@@ -722,6 +722,7 @@ public class Reader {
         while (System.currentTimeMillis() < until) {
             // mem=1 (EPC), ptrBits=0, lenBits=0, sem máscara
             int r = Net_EPC1G2_ReadLabelID(hScanner, 1, 0, 0, new byte[0], IDBuffer, nCounter);
+
             if (r == _OK && nCounter[0] > 0) {
                 int idx = 0;
                 for (int i = 0; i < nCounter[0]; i++) {
@@ -741,7 +742,7 @@ public class Reader {
                     idx += bytes;
                 }
             }
-            try { Thread.sleep(50); } catch (InterruptedException ignore) {}
+            try { Thread.sleep(200); } catch (InterruptedException ignore) {}
         }
         return tags;
     }
@@ -756,7 +757,7 @@ public class Reader {
         if (res == Reader._OK) {
             System.out.println("Start AutoMode Success!");
             // Simula o MyTimerSerialAuto: consome a serial por alguns segundos
-            long end = System.currentTimeMillis() + 3000;
+            long end = System.currentTimeMillis() + 10000;
             StringBuilder buf = new StringBuilder(128);
 
             while (System.currentTimeMillis() < end) {
