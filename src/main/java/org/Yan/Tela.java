@@ -74,6 +74,7 @@ public class Tela {
 
     }
 
+
     private void iniciarTela() {
         JFrame jFrame = new JFrame("Exemplo de Tabela");
         jFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);

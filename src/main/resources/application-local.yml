@@ -1,17 +1,9 @@
 spring:
-  datasource:
-    url: jdbc:postgresql://localhost:5432/sensor   # use 5433 se mapeou 5433:5432
-    username: admin
-    password: 123456
-    driver-class-name: org.postgresql.Driver
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-    open-in-view: false
-    properties:
-        hibernate.format_sql: true
-        hibernate.dialect: org.hibernate.dialect.PostgreSQLDialect
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
   spring:
     rsocket:
       server:
