@@ -10,6 +10,15 @@
     import java.util.concurrent.TimeUnit;
     import java.util.concurrent.atomic.AtomicInteger;
 
+    /**
+    Esse Driver Para o Sensor Fonkan FI-801 foi desenvolvido por Yan da Silva de Carvalho;
+    Engenheiro de Software e Arquiteto de Soluções;
+    Contato: yansilva303@gmail.com;
+    O driver se baseia em comunicação tcp com o microcontrolador do sensor, através do envio e recebimento
+    de pacotes através de arrays de bytes. Para maiores informações consultar o manual de desenvolvimento do
+    fabricante
+     */
+
     public class WirelessReader {
         private InputStream inputStream;
         private OutputStream outputStream;
@@ -228,9 +237,9 @@
                     int got = parseListBuffer(firstBuf, IDlen[0], allDistinct);
 
                     // se houver mais, pagina com EDh
-                    int total = nCounter[0];
+                    int total = nCounter[0]; // -> Total de tags lidas em ListTagId ; Ex: 50 tags
                     int start = got;
-                    int left  = Math.max(0, total - got);
+                    int left  = Math.max(0, total - got); // -> total - a primeira leitura (8)
 
                     final int ED_PAGE = 8; // EDh retorna até 10 grupos por chamada
                     while (left > 0) {
@@ -238,7 +247,9 @@
                         byte[] pageBuf = new byte[1024];
                         int[]  pageLen = new int[1];
 
-
+                            /*Aqui buscamos as tags baseado na posicao dela na memoria; 8 / 16 / 32 ->
+                            cada pagina contem 8 tags; o numero total de paginas e pego em ListTagID;
+                             */
                             r = Net_EPC1G2_GetIDList(hScanner, pageBuf, start, fetch, pageLen);
 
                         if (r != _OK) break;
@@ -276,9 +287,13 @@
                 int need = 1 + epcBytes; // 1 (len) + EPC
                 if (i + need > usedLen) break; // buffer truncado
 
-                // copia EPC
+                // copia o ID da tag comecando de buf[L+1] ate buf[L*2]
                 System.arraycopy(buf, i + 1, temp, 0, epcBytes);
+
+                //extrai a tag passando o array com o ID e o tamanho do ID
                 String epcHex = bytes2HexString(temp, epcBytes);
+
+                //Adiciona a Tag a Lista de Tags
                 out.add(epcHex);
 
                 i += need;
@@ -360,16 +375,43 @@
                     return get[1];
                 }
 
-                nCounter[0] = get[1];
+                nCounter[0] = get[1]; // -> Me devolve o total de tags Lidas, maximo de 8
                 int last = 2;
                 if (nCounter[0] <= 8) {
                     for(int var19 = 0; var19 < nCounter[0]; ++var19) {
-                        int L = get[last] & 0xFF;           // L em WORDS, unsigned
+                        // L em WORDS, unsigned -> Começa a Ler a partir da pos 2 de get -> get[2] = primeiro L
+                        int L = get[last] & 0xFF; // -> primeiro L
+
+
+                        /*
+                        Se L = 0 -> sem tag , e se L > 32 ou seja a tag nao pode ter mais que 64 bytes
+                        * */
                         if (L == 0 || L > 32) return _comm_error;  // sanity opcional
+
+                        /*
+                        Aqui obtemos o ID da Tag -> o id começa apos a pos 2(L) e vai ate L*2
+                        por que L indica o length da tag em WORDS ou seja 2*L -> se L é 6 entao a tag tem 12 bytes
+                        e vai de get[L + 1] até get[L + 1 + L*2 - 1];
+
+                        se melhor exemplificado:
+                        L = 8 -> entao o id da tag tem 16 bytes;
+                        Se o ID da tag inicia apos L e L está em get[2] a tag inicia em get[3]
+                        get[3] -> e o byte0 da tag, que vai até o byte15 -> Logo até get[18] (3+15);
+
+                        next -> representa o L da próxima tag que no caso esta apos L + TAGID;
+                        * */
                         int next = L * 2 + 1;
 
                         if (last + next > get.length) return _comm_error;
+
+                        /*
+                        Aqui copiamos o array get[], começano de last(L), para o array btID, começando de
+                        L - 2 = 0, ate next que é L * 2 + 1; Ex: se L fosse 8 -> 16 + 1 -> ou seja
+                        vai copiar de get[2] ate get[18]
+                        * */
                         System.arraycopy(get, last, btID, last - 2, next);
+
+                        // Last passa a ser L + next -> L + a tag inteira + 1  = proximo L
                         last += next;
                     }
                 } else {
@@ -404,8 +446,8 @@
             try {
                 put[0] = 4;
                 put[1] = -19;
-                put[2] = (byte)stNum;
-                put[3] = (byte)nCounter;
+                put[2] = (byte)stNum; // -> indice do proximo grupo de tags no caso 8 por que ja rodamos ListTagID
+                put[3] = (byte)nCounter; // quantos grupos de pagina queremos na chamada
                 put[4] = 0;
                 if (!wirelessTcpPacket(hScanner, put, get)) {
                     return _net_error;
