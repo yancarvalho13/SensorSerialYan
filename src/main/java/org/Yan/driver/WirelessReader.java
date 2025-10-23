@@ -1,8 +1,10 @@
     package org.Yan.driver;
 
+    import org.Yan.exceptions.InvalidResponseReaderException;
+    import org.Yan.exceptions.NetWorkErrorException;
+
     import java.io.*;
     import java.net.Socket;
-    import java.time.LocalTime;
     import java.util.*;
     import java.util.concurrent.ConcurrentHashMap;
     import java.util.concurrent.ExecutorService;
@@ -58,21 +60,21 @@
             return btOutGlobal.toByteArray();
         }
 
-        private static int contarGrupos(byte[] buffer, int pos, int len) {
-            int end = pos + len;
-            int count = 0;
-            while (pos < end) {
-                int L = buffer[pos] & 0xFF;
-                if (L == 0) break;
-                int bytes = 1 + L * 2;
-                if (pos + bytes > end) break; // incompleto
-                pos += bytes;
-                count++;
-            }
-            return count;
-        }
 
-        public int wirelessGetReaderVersion(int hScanner,short[] wHardVer,short[] wSoftVer){
+        /**
+         *
+         * @param hScanner
+         * hScanner represente o estado do sensor, passamos int[] hScanner = new int[1]
+         * -> dessa forma representamos que o sensor esta conectado, esse metodo e assinado em qualquer comando
+         * passado para o sensor;
+         * @param wHardVer
+         * Aqui é onde recebemos e armazenamos a versao do Hardware do sensor, os valores sao devolvidos em WORDS ->
+         * Words sao representados por 16 bits, logo passamos um byte[] wHardVer = new byte[2];
+         * @param wSoftVer
+         * Aqui é onde recebemos e armazenamos a versao do Software do sensor, os valores sao devolvidos em WORDS ->
+         * WORDS são representados por 16 bits, logo passamos um byte[] wSoftVer = new byte[2];
+         */
+        public void wirelessGetReaderVersion(int hScanner,byte[] wHardVer,byte[] wSoftVer){
             int res = _OK;
             byte[] cmd = new byte[MAX_PACKET_LEN];
             byte[] ret = new byte[MAX_PACKET_LEN];
@@ -84,25 +86,20 @@
     //        WirelessRunner();
 
                 if (!wirelessTcpPacket(hScanner, cmd, ret)) {
-                    return _net_error;
+                    throw new NetWorkErrorException("Falha ao enviar pacote TCP");
+                };
+
+                if(ret[0] == (byte)0xF4){
+                    throw new InvalidResponseReaderException("Falha ao obter Versão do Leitor");
                 }
-                ;
-                if (ret[0] == -12) {
-                    return ret[1];
-                }
+
+                System.arraycopy(ret, 2, wHardVer, 0, 2);
+                System.arraycopy(ret, 4, wSoftVer, 0,2 );
 
 
-                wHardVer[0] = (short) (ret[2] * 256 + ret[3]);
-                wSoftVer[0] = (short) (ret[4] * 256 + ret[5]);
-
-
-                res = _OK;
             } catch (Exception e){
                 e.printStackTrace();
-                System.out.println("Falha ao obter versao do Leitor");
-                res = -1;
             }
-            return res;
 
         }
 
@@ -112,11 +109,24 @@
             try {
                 if (inputStream == null || outputStream == null) return false;
 
-                // montar TX: [0x40][len=cmd[0]][payload...][checksum]
+                /*Aqui montamos o pacote de envio para o sensor, criamos um array com 2 bytes
+                no primeiro cmd[0] acomodamos o start 0x40 (padrão de todos os comandos) e deixamos
+                um espaço vazio para o checksum (soma de todos os bytes do pacote) do final.
+                 */
                 byte[] send = new byte[(cmd[0] & 0xFF) + 2];
                 byte sum = 0x40;
-                send[0] = 0x40;
-                for (int i = 0; i < (cmd[0] & 0xFF); i++) { send[i+1] = cmd[i]; sum += send[i+1]; }
+                send[0] = 0x40; // -> armazenamento do start 0x40
+                for (int i = 0; i < (cmd[0] & 0xFF); i++) {
+                    /*
+                    aqui armazenamos os bytes do comando começando da pos 1 do pacote send
+                    e fazemos a soma começando de 0x40 ate o ultimo byte do comando para obter
+                    o checksum.
+                     */
+                    send[i+1] = cmd[i]; sum += send[i+1];
+                }
+
+
+
                 sum = (byte)(~sum + 1);
                 send[send.length - 1] = sum;
 
@@ -124,13 +134,29 @@
                 outputStream.write(send);
                 outputStream.flush();
 
-                // lê cabeçalho de 4 bytes: [F0/F4][len][cmdEco][...]
+
                 long deadline = System.currentTimeMillis() + TIMEOUT_MS;
+                /*
+                Aqui vamos ler os 4 bytes do inicio do pacote de resposta do sensor
+                em head4[0] podemos obter 0xF0 (Sucesso) ou 0xF4 (erro);
+                Em head4[1] temos o lenght da resposta, que inclui, o eco do comando head4[2]
+                ,o dispositivo ecoa o comando para vc validar que aquela resposta e referente
+                ao comando que vc enviou. E em seguida o payload head4[3] -> primeiro byte do
+                payload;
+                 */
                 byte[] head4 = readExact(inputStream, 4, deadline);
-                System.out.println(head4[0]+", "+head4[1] +", "+ head4[2]+", "+head4[3]);// você já tem readExact(...)
                 byte boot = head4[0];
-                int  len  = head4[1] & 0xFF;                      // (cmd + dados)
-                int  rest = Math.max(0, len - 2);                 // bytes restantes após [len][cmdEco]
+                int  len  = head4[1] & 0xFF;
+                /*
+                Rest verifica e obtem o restante do payload que ainda falta ser lido
+                a parti do len - 2 ( 1 é o cmdEco e 1 é o primeiro byte do payload)
+                 */
+                int  rest = Math.max(0, len - 2); // bytes restantes após [len][cmdEco]
+
+                /*
+                Faz a leitura dos bytes restantes do payload da resposta do sensor
+                e armazena os valores em byte[] body
+                 */
                 byte[] body = (rest > 0) ? readExact(inputStream, rest, deadline) : new byte[0];
 
                 // montar receiveTemp “virtual” para reaproveitar a lógica:
@@ -158,6 +184,8 @@
                 return false;
             }
         }
+
+
         public int Net_SetAntenna(int hScanner, int Antenna) {
             int res = _OK;
             byte[] put = new byte[MAX_PACKET_LEN];
@@ -185,19 +213,37 @@
             return res;
         }
 
-        private static byte[] readExact(InputStream in, int n, long deadlineMs) throws IOException {
-            byte[] out = new byte[n];
-            int off = 0;
-            while (off < n) {
+        /**
+         *
+         * @param in
+         * Stream de dados do pacote resposta do Sensor
+         * @param restBytes
+         * Quantidade de bytes que faltam para o final da leitura
+         * @param deadlineMs
+         * Tempo Maximo de leitura para timeout
+         * @return
+         * Um array de bytes com os dados enviados pelo sensor
+         * @throws IOException
+         * Exceção de Timeout por tempo de leitura
+         */
+        private static byte[] readExact(InputStream in, int restBytes, long deadlineMs) throws IOException {
+            byte[] out = new byte[restBytes];
+            int initialPosition = 0;
+            while (initialPosition < restBytes) {
                 if (System.currentTimeMillis() > deadlineMs)
-                    throw new IOException("Serial read timeout (" + n + " bytes)");
-                int r = in.read(out, off, n - off);
-                if (r < 0) throw new EOFException("Serial closed");
-                if (r == 0) {
+                    throw new IOException("Serial read timeout (" + restBytes + " bytes)");
+                /*
+                readedByes, representa quantos bytes fora lidos na chamada de in.read.
+                Logo in.read faz a leitura de todos os bytes no stream de dados, e copia para
+                o array out.
+                 */
+                int readedBytes = in.read(out, initialPosition, restBytes - initialPosition);
+                if (readedBytes < 0) throw new EOFException("Serial closed");
+                if (readedBytes == 0) {
                     try { Thread.sleep(1); } catch (InterruptedException ignored) {}
                     continue;
                 }
-                off += r;
+                initialPosition += readedBytes;
             }
             return out;
         }
@@ -707,7 +753,6 @@
          * @return Um array de 32 bytes com os parâmetros em caso de sucesso, ou null em caso de falha.
          */
         public byte[] readParams(int hScanner) {
-            System.out.println("Iniciando leitura dos parâmetros básicos do leitor...");
             byte[] cmd = new byte[MAX_PACKET_LEN];
             byte[] ret = new byte[MAX_PACKET_LEN];
 
@@ -737,13 +782,107 @@
                 // pois o primeiro é o status `F0H`.
                 System.arraycopy(ret, 1, params, 0, 32);
 
-                System.out.println("Parâmetros lidos com sucesso.");
+                ParseParams(params);
+
                 return params;
 
             } catch (Exception e) {
                 e.printStackTrace();
                 return null;
             }
+        }
+
+        private void ParseParams(byte[] parametros){
+            Map<Integer, Integer> BaudRates = Map.of(4,9600,
+                    5,19200,
+                    6,38400,
+                    7,57600,
+                    8,115200);
+            Map<Integer, String> TagTypes = Map.of(1,"ISO18000-6B",
+                    2,"EPCC1",
+                    4,"EPCC1G2",
+                    8,"EM4442",
+                    10,"ATA");
+            Map<Integer, String> ReadingDurationTimes = Map.of(0, "10ms",
+                    1,"20ms",
+                    2,"30ms",
+                    3,"40ms");
+
+            int hScanner = 1;
+            byte[] ip = new byte [4];
+            byte[] port = new byte[2];
+            byte[] mask = new byte[4];
+            byte[] gateway = new byte[4];
+            byte[] macAdress = new byte[6];
+            int BaudRate = parametros[0] & 0xFF;
+            int TransmissionPower = parametros[1] & 0xFF;
+            int ReaderMode = parametros[5] & 0xFF;
+            int TagType = parametros[8] & 0xFF;
+            int ReadinDuration = parametros[9] & 0xFF;
+
+            System.out.println("Sensor conectado com sucesso");
+            System.out.println("================DADOS DO SENSOR===================");
+
+            System.out.println("Baud Rate da porta Serial: "+ BaudRates.get(BaudRate)+"bps");
+
+            System.out.println("Potencia de transmissão: "+ TransmissionPower);
+
+            StringJoiner sj = new StringJoiner(" ~ ");
+            sj.add(String.valueOf(parametros[2] & 0xFF));
+            sj.add(String.valueOf(parametros[3] & 0xFF));
+            System.out.println("Ponto inicial - final da frequência: "+sj );
+
+            System.out.println("Profundidade de modulação: "+ (parametros[4] & 0xFF));
+
+            System.out.println("Modo ativo do sensor: " + (ReaderMode == 0 ? "Auto - 0 " : "Command - 1"));
+
+            System.out.println("Máximo de Tags por leitura: " + (parametros[8] & 0xFF));
+
+            System.out.println("Tipo da Tag Configurada : " + TagTypes.get(TagType));
+
+            System.out.println("Duração do tempo de leitura da tag: " + ReadingDurationTimes.get(ReadinDuration));
+
+            System.out.println("Quantidade de Leituras por requisição: " + (parametros[10] & 0xFF));
+
+            System.out.println("Alarme (buzzer) de leitura ligado :" + ((parametros[11] & 0xFF) == 0 ? "Desligado - 0" : "Ligado - 1"));
+
+            System.arraycopy(parametros,12, ip, 0, 4);
+            sj = new StringJoiner(".");
+            for (byte b : ip){
+                sj.add(String.valueOf((b & 0xFF)));
+            }
+            System.out.println("Endereço ip: "+ sj);
+
+            System.arraycopy(parametros, 16, port, 0, 2);
+            StringBuilder sb = new StringBuilder();
+            for (byte b : port) {
+                sb.append(b & 0xFF);
+            }
+            System.out.println("Porta: " + sb);
+
+            System.arraycopy(parametros, 18, mask, 0, 4);
+            sj = new StringJoiner(".");
+            for (byte b : mask) {
+                sj.add(String.valueOf(b & 0xFF));
+            }
+            System.out.println("Mascara: "+ sj);
+
+            sj = new StringJoiner(".");
+            System.arraycopy(parametros, 22,gateway, 0, 4);
+            for(byte b : gateway){
+                sj.add(String.valueOf(b & 0xFF));
+            }
+            System.out.println("Gateway: " + sj);
+
+            sj = new StringJoiner(":");
+            System.arraycopy(parametros, 26, macAdress, 0, 6);
+            for (byte b : macAdress){
+                sj.add(String.format("%02X",b & 0xFF));
+            }
+            System.out.println("Mac: "+sj);
+
+
+
         }
 
         /**
