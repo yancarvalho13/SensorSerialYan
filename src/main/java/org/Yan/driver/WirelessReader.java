@@ -6,21 +6,32 @@
     import java.io.*;
     import java.net.Socket;
     import java.util.*;
-    import java.util.concurrent.ConcurrentHashMap;
-    import java.util.concurrent.ExecutorService;
-    import java.util.concurrent.Executors;
-    import java.util.concurrent.TimeUnit;
     import java.util.concurrent.atomic.AtomicInteger;
 
     /**
-    Esse Driver Para o Sensor Fonkan FI-801 foi desenvolvido por Yan da Silva de Carvalho;
-    Engenheiro de Software e Arquiteto de Soluções;
-    Contato: yansilva303@gmail.com;
-    O driver se baseia em comunicação tcp com o microcontrolador do sensor, através do envio e recebimento
-    de pacotes através de arrays de bytes. Para maiores informações consultar o manual de desenvolvimento do
-    fabricante
+     * Driver para o sensor **Fonkan FI-801**, desenvolvido por **Yan da Silva de Carvalho** —
+     * Engenheiro de Software e Arquiteto de Soluções.
+     * <p>
+     * Contato: <a href="mailto:yansilva303@gmail.com">yansilva303@gmail.com</a>
+     * <p>
+     * Este driver implementa a comunicação TCP entre o host e o microcontrolador do sensor,
+     * através do envio e recebimento de pacotes binários (arrays de bytes).
+     * <p>
+     * Cada operação de leitura, escrita ou controle é realizada via socket,
+     * obedecendo ao protocolo definido no manual de desenvolvimento do fabricante.
+     * <p>
+     * <b>Resumo técnico:</b>
+     * <ul>
+     *   <li>Protocolo: TCP/IP</li>
+     *   <li>Camada de aplicação: frames binários estruturados</li>
+     *   <li>Codificação: Little-Endian (salvo exceções indicadas)</li>
+     *   <li>Timeout: 200 000 ms (compatível com o firmware legado)</li>
+     * </ul>
+     *
+     * <p><b>Observação:</b> para informações detalhadas sobre os comandos,
+     * estruturas de pacotes e significados de códigos de erro,
+     * consulte o manual oficial do fabricante do sensor Fonkan FI-801.
      */
-
     public class WirelessReader {
         private InputStream inputStream;
         private OutputStream outputStream;
@@ -39,6 +50,12 @@
         private final int intervalMs = 50;    // intervalo entre ciclos
 
 
+        /**
+         * Construtor que inicializa o leitor a partir de um {@link Socket} já conectado.
+         *
+         * @param socket socket TCP conectado ao microcontrolador do sensor.
+         * @throws RuntimeException caso ocorra falha ao obter os streams de entrada ou saída.
+         */
         public WirelessReader(Socket socket) {
             this.socket = socket;
             try {
@@ -50,15 +67,6 @@
         }
 
 
-
-        public synchronized void clearBtOut() {
-            btOutGlobal.reset();
-        }
-
-        /** Retorna uma CÓPIA dos bytes concatenados (thread-safe) */
-        public synchronized byte[] getBtOut() {
-            return btOutGlobal.toByteArray();
-        }
 
 
         /**
@@ -321,6 +329,37 @@
             return allDistinct;
         }
 
+
+        /**
+         * Varre um buffer contendo uma lista de EPCs no formato
+         * {@code [L][EPC(L*2 bytes)] [L][EPC] ...} e adiciona cada EPC decodificado
+         * (em hexadecimal) ao conjunto de saída.
+         * <p>
+         * O protocolo empacota cada entrada iniciando por {@code L} (tamanho em WORDS, 1 WORD = 2 bytes),
+         * seguido por {@code L*2} bytes do EPC. O método caminha sequencialmente pelo buffer até
+         * consumir {@code usedLen} bytes, encontrar inconsistências ou um {@code L} inválido.
+         *
+         * <h3>Validações realizadas</h3>
+         * <ul>
+         *   <li>{@code L == 0} ou {@code L > 32} → encerra a varredura (sanity check).</li>
+         *   <li>Buffer truncado: se não houver bytes suficientes para {@code 1 + L*2}, encerra.</li>
+         * </ul>
+         *
+         * <h3>Complexidade</h3>
+         * O(n), onde n é {@code usedLen}, com cópias lineares por grupo.
+         *
+         * @param buf     buffer de entrada com as entradas sequenciais no formato
+         *                {@code [L][EPC(L*2)]...}.
+         * @param usedLen quantidade de bytes válidos em {@code buf} a serem processados
+         *                (a partir de {@code buf[0]}). Não são lidos bytes após {@code usedLen}.
+         * @param out     conjunto de saída onde cada EPC será inserido em formato hexadecimal
+         *                (uppercase/lowercase conforme a implementação de {@code bytes2HexString}).
+         * @return quantidade de grupos (tags) processados e adicionados a {@code out}.
+         *
+         * @implNote Usa um buffer temporário fixo de 128 bytes para o EPC, suficiente para
+         *           o máximo de 32 WORDS (64 bytes) de EPC ({@code 32 * 2}).
+         * @see #bytes2HexString(byte[], int)
+         */
         private static int parseListBuffer(byte[] buf, int usedLen, Set<String> out) {
             int i = 0, groups = 0;
             byte[] temp = new byte[128]; // EPC máx 32 words = 64 bytes → 128 cabe
@@ -333,13 +372,13 @@
                 int need = 1 + epcBytes; // 1 (len) + EPC
                 if (i + need > usedLen) break; // buffer truncado
 
-                // copia o ID da tag comecando de buf[L+1] ate buf[L*2]
+                // copia o ID da tag começando após L
                 System.arraycopy(buf, i + 1, temp, 0, epcBytes);
 
-                //extrai a tag passando o array com o ID e o tamanho do ID
+                // extrai a tag passando o array com o ID e o tamanho do ID
                 String epcHex = bytes2HexString(temp, epcBytes);
 
-                //Adiciona a Tag a Lista de Tags
+                // adiciona a Tag ao conjunto (evita duplicados)
                 out.add(epcHex);
 
                 i += need;
@@ -348,7 +387,29 @@
             return groups;
         }
 
-        // util do usuário
+
+
+        /**
+         * Converte um array de bytes em uma string hexadecimal legível.
+         * <p>
+         * Cada byte é convertido em dois caracteres hexadecimais (0–F). Caso o valor
+         * convertido possua apenas um dígito, é adicionado um '0' à esquerda para manter
+         * o formato de dois dígitos por byte. O resultado final é retornado em letras
+         * maiúsculas, sem espaços ou separadores.
+         *
+         * <h3>Exemplo:</h3>
+         * <pre>{@code
+         * byte[] data = { (byte)0xE2, (byte)0x80, 0x11 };
+         * String hex = bytes2HexString(data, data.length);
+         * // hex = "E28011"
+         * }</pre>
+         *
+         * @param b      array de bytes de entrada.
+         * @param count  quantidade de bytes válidos a converter, iniciando de {@code b[0]}.
+         *               Caso {@code count} seja menor que {@code b.length}, os bytes excedentes
+         *               são ignorados.
+         * @return       representação hexadecimal em letras maiúsculas dos {@code count} bytes.
+         */
         public static String bytes2HexString(byte[] b, int count) {
             String ret = "";
             for (int i = 0; i < count; ++i) {
@@ -364,8 +425,27 @@
         }
 
 
-
-
+        /**
+         * Configura o modo automático do leitor via rede e retorna o status da operação.
+         * <p>
+         * Monta e envia um comando ao dispositivo para habilitar/desabilitar (ou alterar)
+         * o modo automático de leitura, utilizando o handle de conexão {@code hScanner}.
+         * O frame de comando varia conforme o endereçamento:
+         * <ul>
+         *   <li><b>Address == 0</b>: comando sem endereçamento explícito
+         *       ({@code [len=3, cmd=0x0F, mode, 0x00]}).</li>
+         *   <li><b>Address != 0</b>: comando endereçado
+         *       ({@code [len=4, cmd=0x0F, address, mode, 0x00]}).</li>
+         * </ul>
+         * Após o envio, a resposta é verificada: se o primeiro byte do retorno for
+         * {@code 0xF4}, o segundo byte contém o código de erro do dispositivo.
+         *
+         * @param hScanner handle/identificador da sessão do leitor (obtido na conexão).
+         * @param Mode     valor do modo automático a configurar (semântica conforme o firmware do leitor).
+         * @param Address  endereço lógico do leitor; use {@code 0} quando não houver endereçamento.
+         * @return {@code _OK} (0) em sucesso; código de erro do dispositivo (quando {@code ret[0] == 0xF4});
+         *         {@code _net_error} em falha de transporte; ou {@code -1} em exceção.
+         */
         public int Net_AutoMode(int hScanner, int Mode, int Address) {
             int res = 0;
             byte[] cmd = new byte[MAX_PACKET_LEN];
@@ -383,11 +463,72 @@
             return res;
         }
 
-        // Agregador — chama EEh e, se M>8, pagina com EDh até completar.
+        /**
+         * Este método faz a leitura das primeiras 8 tags e devolve o total de tags lidas
+         * no comando enviado. Após as primeiras tags, verifica quantas tags faltam e chama
+         * o método GetIdList para ler as tags restantes.
+         * <p>
+         * Parâmetros:
+         * <ul>
+         *   <li><b>hScanner</b> → <code>1</code> → Representa que o leitor está conectado.</li>
+         *   <li><b>mem</b> → <code>1</code> → Banco de memória EPC da TAG.</li>
+         *   <li><b>ptr</b> → <code>0</code> → Ponteiro inicial de leitura do banco, inicia do bit 0.</li>
+         *   <li><b>len</b> → <code>0</code> → O sensor não suporta parâmetros de máscara nativamente, definido sempre como 0.</li>
+         *   <li><b>mask</b> → <code>[0]</code> → Buffer de máscara para filtragem de tags específicas.
+         *       O sensor não suporta nativamente parâmetros de máscara, definido sempre como 0.</li>
+         *   <li><b>btID</b> → <code>[1]</code> → Buffer em que armazenamos as tags.</li>
+         *   <li><b>nCounter</b> → <code>n</code> → Representa a quantidade de tags lidas na varredura.</li>
+         *   <li><b>IDlen</b> → <code>[]</code> → Informa até onde os dados válidos em btID vão, pois o leitor
+         *       pode não preencher o array completamente.</li>
+         * </ul>
+         * Ao final, o sensor retorna <code>0</code> (OK) ou <code>1</code> (Falha na leitura ou montagem do comando).
+         *
+         * @param hScanner
+         *        1 → Scanner conectado (valor padrão)
+         *
+         * @param mem
+         *        Define o banco de memória da tag que será acessado através do comando EPCG2.
+         *        A tag armazena as seguintes informações em seus quatro bancos:
+         *        <ul>
+         *          <li>0 → Banco exclusivo para senhas</li>
+         *          <li>1 → Banco EPC = Cabeçalho CRC + PC + EPC do produto (usar esse em 90% dos casos com TAG ID)</li>
+         *          <li>2 → Banco TID = ID do fabricante e chip</li>
+         *          <li>3 → Banco USER = Livre para escrita</li>
+         *        </ul>
+         *
+         * @param ptr
+         *        Valor que define a partir de qual bit começamos a leitura dentro do banco da Tag.
+         *        Exemplo: Quando definimos <code>ptr = 0</code> e <code>mem = 1</code>, queremos dizer:
+         *        “Comece a leitura a partir do bit 0 do banco EPC da tag”, ou seja,
+         *        o leitor vai ler <code>bancoEPC[CRC16 | PC | EPC]</code>.
+         *
+         * @param len
+         *        Define quantos bits da máscara devem ser aplicados no filtro de seleção. Trabalha sempre com bits,
+         *        e não com bytes.
+         *
+         * @param mask
+         *        Comando serve para filtragem de EPC, quando o usuário quiser que o leitor responda apenas
+         *        a tags específicas detectadas. Exemplo: todas as tags com prefixo <code>3008</code> (ou 0x30, 0x08).
+         *
+         * @param btID
+         *        Buffer onde o leitor grava as tags que ele encontrou. Cada tag vem uma atrás da outra,
+         *        separadas pela contagem de bytes da tag definida em L (2 bytes).
+         *
+         * @param nCounter
+         *        Retorna o número de tags detectadas pelo sensor.
+         *
+         * @param IDlen
+         *        Informa até onde os dados válidos vão dentro de <code>btID</code>.
+         *
+         * @return
+         *        <code>0</code> se OK ou <code>-1</code> se falha.
+         */
         private  int Net_EPC1G2_ListTagID(int hScanner, int mem, int ptr, int len, byte[] mask, byte[] btID, int[] nCounter, int[] IDlen) {
             int res = _OK;
             byte[] put = new byte[MAX_PACKET_LEN];
             byte[] get = new byte[7680];
+            if(mem == 0) mem = 1;
+
 
             try {
                 int m;
@@ -484,6 +625,42 @@
             return res;
         }
 
+
+
+        /**
+         * Recupera um bloco de IDs de tags (EPCs) adicionais após a leitura inicial feita por {@link #Net_EPC1G2_ListTagID}.
+         * <p>
+         * O leitor Fonkan FI-801 envia no máximo 8 tags por pacote. Quando há mais de 8 tags detectadas,
+         * este método permite buscar as demais por meio de chamadas subsequentes, paginadas.
+         * <p>
+         * A função envia o comando {@code -19 (0xED)} ao leitor, especificando o índice inicial (stNum)
+         * e o número de grupos (nCounter) a recuperar.
+         * Cada grupo contém até 8 tags, estruturadas como:
+         * {@code [L][EPC(L*2 bytes)] [L][EPC] ...}.
+         *
+         * <h3>Fluxo resumido:</h3>
+         * <ul>
+         *   <li>Envia o comando {@code 0xED} com o índice do grupo e a quantidade de páginas desejadas.</li>
+         *   <li>Recebe o pacote binário contendo até {@code nCounter * 8} tags.</li>
+         *   <li>Copia os EPCs para o buffer {@code btID} de forma contínua, mantendo o formato [L][EPC bytes].</li>
+         *   <li>Atualiza {@code IDlen[0]} com o número total de bytes válidos em {@code btID}.</li>
+         * </ul>
+         *
+         * <h3>Validações e erros:</h3>
+         * <ul>
+         *   <li>Se {@code L == 0} ou {@code L > 32}, a leitura é descartada (tag inválida).</li>
+         *   <li>Se os limites de buffer forem excedidos, retorna {@code _comm_error}.</li>
+         *   <li>Se {@code get[0] == -12}, o leitor retornou um erro interno.</li>
+         * </ul>
+         *
+         * @param hScanner identificador da conexão ativa com o leitor.
+         * @param btID buffer onde as tags lidas são armazenadas (cada tag = [L][EPC bytes]).
+         * @param stNum índice inicial da leitura de grupo (ex.: 8, quando já foram lidas 8 tags iniciais).
+         * @param nCounter número de grupos (páginas) a recuperar.
+         * @param IDlen retorna, em {@code IDlen[0]}, o total de bytes válidos em {@code btID}.
+         * @return {@code _OK (0)} em sucesso; {@code _net_error (134)} em falha de comunicação;
+         *         {@code _comm_error (131)} em inconsistência de pacote; ou {@code -1} em exceção.
+         */
         private  int Net_EPC1G2_GetIDList(int hScanner, byte[] btID, int stNum, int nCounter, int[] IDlen) {
             int res = _OK;
             byte[] put = new byte[MAX_PACKET_LEN];
@@ -528,63 +705,55 @@
             return res;
         }
 
-        public  int Net_EPC1G2_ReadLabelID(int hScanner, int mem, int ptr, int len, byte[] mask, byte[] IDBuffer, int[] nCounter) {
-            int res = _OK;
 
-            try {
-                int i = 0;
-                int j = 0;
-                int k = 0;
-                int[] l = new int[2];
-                int[] IDlen = new int[2];
-                byte[] lpbuffer = new byte[1024];
-                nCounter[0] = 0;
-                res = Net_EPC1G2_ListTagID(hScanner, mem, ptr, len, mask, IDBuffer, nCounter, IDlen);
-                if (res != _OK) {
-                    return res;
-                }
-
-                if (nCounter[0] > 8) {
-                    j = nCounter[0] / 8;
-                    k = nCounter[0] - j * 8;
-
-                    for(int e = 1; e < j; ++e) {
-                        res = Net_EPC1G2_GetIDList(hScanner, lpbuffer, e * 8, 8, l);
-                        if (res != _OK) {
-                            return res;
-                        }
-
-                        IDlen[0] += l[0];
-                    }
-
-                    if (k != 0) {
-                        res = Net_EPC1G2_GetIDList(hScanner, lpbuffer, j * 8, k, l);
-                        if (res != _OK) {
-                            return res;
-                        }
-                    }
-                }
-
-                res = _OK;
-            } catch (Exception e) {
-                e.printStackTrace();
-                System.out.println("Exception of Net_EPC1G2_ReadLabelID:\n");
-                res = -1;
-            }
-
-            return res;
-        }
-    /**
-     * Configura o intervalo de leitura no modo automático
-     * @param hScanner identificador do scanner (geralmente 0)
-     * @param intervalValue valor do intervalo:
-     *                     0 = 10ms
-     *                     1 = 20ms
-     *                     2 = 30ms (padrão)
-     *                     3 = 50ms
-     *                     4 = 100ms
-     * @return código de resultado (0 = sucesso)
-     */
+        /**
+         * Configura o intervalo de leitura do sensor no modo automático.
+         * <p>
+         * Este método envia dois comandos ao leitor:
+         * <ol>
+         *   <li><b>ReadAutoParam (0x14 / 20):</b> lê os parâmetros automáticos atuais do sensor.</li>
+         *   <li><b>WriteAutoParam (0x13 / 19):</b> reescreve os parâmetros com o novo valor de intervalo.</li>
+         * </ol>
+         * O intervalo controla a frequência com que o leitor executa varreduras automáticas
+         * e reporta as tags detectadas.
+         *
+         * <h3>Tabela de valores do parâmetro {@code intervalValue}</h3>
+         * <pre>
+         *  0 = 10ms
+         *  1 = 20ms
+         *  2 = 30ms (padrão)
+         *  3 = 50ms
+         *  4 = 100ms
+         * </pre>
+         *
+         * <h3>Fluxo resumido:</h3>
+         * <ul>
+         *   <li>Valida o valor de {@code intervalValue} (0–4).</li>
+         *   <li>Lê os parâmetros atuais com o comando {@code 0x14 (ReadAutoParam)}.</li>
+         *   <li>Atualiza o byte de índice 3 ({@code autoParams[3]}) com o novo intervalo.</li>
+         *   <li>Reenvia os parâmetros modificados com o comando {@code 0x13 (WriteAutoParam)}.</li>
+         * </ul>
+         *
+         * <p>Em caso de falha na comunicação ou erro retornado pelo dispositivo, o método
+         * imprime mensagens descritivas no console e retorna o código correspondente.</p>
+         *
+         * @param hScanner       identificador do scanner (geralmente 0)
+         * @param intervalValue  valor do intervalo de leitura:
+         *                       <ul>
+         *                         <li>0 = 10ms</li>
+         *                         <li>1 = 20ms</li>
+         *                         <li>2 = 30ms (padrão)</li>
+         *                         <li>3 = 50ms</li>
+         *                         <li>4 = 100ms</li>
+         *                       </ul>
+         * @return código de resultado:
+         *         <ul>
+         *           <li>0 = sucesso</li>
+         *           <li>-1 = erro de parâmetro</li>
+         *           <li>{@code _net_error} = falha de comunicação TCP</li>
+         *           <li>ou código de erro específico retornado pelo dispositivo (0xF4)</li>
+         *         </ul>
+         */
     public int setReadInterval(int hScanner, int intervalValue) {
         if (intervalValue < 0 || intervalValue > 4) {
             System.out.println("Valor de intervalo inválido. Use: 0=10ms, 1=20ms, 2=30ms, 3=50ms, 3=100ms");
@@ -647,110 +816,19 @@
         return _OK;
     }
 
-        /**
-         * Método que lê múltiplos lotes de tags e usa multithreading para processamento
-         */
-        public Set<String> Net_getDistinctTagsBatchedMultithread(int numBatches) {
-            final int hScanner = 0, Address = 0;
-            final ConcurrentHashMap<String, Boolean> allTags = new ConcurrentHashMap<>();
-            final ExecutorService executor = Executors.newFixedThreadPool(
-                    Math.max(2, Runtime.getRuntime().availableProcessors() - 1)
-            );
-
-            try {
-                // Garantir modo correto
-                Net_AutoMode(hScanner, 0, Address);
-
-                // Ler em vários lotes
-                for (int batch = 0; batch < numBatches; batch++) {
-                    byte[] IDBuffer = new byte[4096];
-                    int[] nCounter = new int[1];
-
-                    // Limpar o buffer
-                    Arrays.fill(IDBuffer, (byte)0);
-
-                    // Leitura
-                    int r = Net_EPC1G2_ReadLabelID(hScanner, 1, 0, 0, new byte[0], IDBuffer, nCounter);
-
-                    if (r == _OK && nCounter[0] > 0) {
-                        System.out.println("Lote " + (batch + 1) + ": Detectadas " + nCounter[0] + " tags");
-
-                        // Criar uma cópia do buffer para processamento assíncrono
-                        final byte[] bufferCopy = Arrays.copyOf(IDBuffer, IDBuffer.length);
-                        final int tagCount = nCounter[0];
-
-                        // Submeter o lote para processamento em segundo plano
-                        executor.submit(() -> {
-                            // Processar as tags deste lote
-                            processTagsToMap(bufferCopy, tagCount, allTags);
-                        });
-
-                        // Esperar um pouco entre lotes para evitar sobrecarregar o dispositivo
-                        Thread.sleep(500);
-                    } else {
-                        // Se não encontrou tags neste lote, não precisa continuar
-                        if (batch > 0) break;
-                    }
-                }
-
-                // Aguardar todas as threads concluírem
-                executor.shutdown();
-                executor.awaitTermination(5, TimeUnit.SECONDS);
-
-            } catch (Exception e) {
-                e.printStackTrace();
-            } finally {
-                if (executor != null && !executor.isShutdown()) {
-                    executor.shutdownNow();
-                }
-            }
-
-            return new HashSet<>(allTags.keySet());
-        }
 
         /**
-         * Processa as tags de um buffer e adiciona ao mapa concorrente
-         */
-        private void processTagsToMap(byte[] buffer, int numTags, ConcurrentHashMap<String, Boolean> tagsMap) {
-            int idx = 0;
-            int tagsProcessed = 0;
-
-            while (idx < buffer.length && tagsProcessed < numTags) {
-                if (buffer[idx] == 0) break;
-
-                int L = buffer[idx] & 0xFF;
-
-                if (L < 1 || L > 31 || idx + 1 + L * 2 > buffer.length) {
-                    idx++;
-                    continue;
-                }
-
-                StringBuilder epc = new StringBuilder(L * 4);
-                for (int k = 0; k < L * 2; k++) {
-                    epc.append(String.format("%02X", buffer[idx + 1  + k]));
-                }
-
-                char a = 'E';
-                char b = '2';
-                String tag = epc.toString();
-                System.out.println("Tag: "+ tag);
-                if (!tag.isEmpty() && !tag.contains("000000000000")) {
-
-                        tagsMap.put(tag, true);
-
-                }
-
-                idx += 1 + L * 2;
-                tagsProcessed++;
-            }
-        }
-
-
-        /**
-         * Lê o bloco de 32 bytes de parâmetros básicos de operação do leitor.
+         * Lê o bloco de 32 bytes de parâmetros básicos de operação do leitor Fonkan FI-801.
+         * <p>
+         * Este método envia o comando {@code 0x06 (Read Param)} ao leitor, recebendo como resposta
+         * um bloco de 32 bytes contendo as configurações atuais do dispositivo, como baud rate,
+         * potência de transmissão, modo de operação, tipo de tag configurada, entre outros.
+         * <p>
+         * Os dados recebidos são processados internamente pelo método {@link #ParseParams(byte[])}
+         * para exibir informações detalhadas sobre o estado e a configuração atual do sensor.
          *
-         * @param hScanner O identificador do scanner (geralmente 0).
-         * @return Um array de 32 bytes com os parâmetros em caso de sucesso, ou null em caso de falha.
+         * @param hScanner identificador do scanner (geralmente 1).
+         * @return um array de 32 bytes com os parâmetros em caso de sucesso, ou {@code null} em caso de falha.
          */
         public byte[] readParams(int hScanner) {
             byte[] cmd = new byte[MAX_PACKET_LEN];
@@ -792,6 +870,17 @@
             }
         }
 
+        /**
+         * Interpreta e exibe os 32 bytes de parâmetros retornados pelo comando {@code Read Param (0x06)}.
+         * <p>
+         * Este método converte cada campo do array {@code parametros} em informações legíveis,
+         * como baud rate da porta serial, potência de transmissão, modo de leitura, tipo da tag,
+         * tempo de varredura, endereço IP, máscara, gateway e MAC Address.
+         * <p>
+         * Os campos e seus significados são definidos conforme o manual técnico do leitor Fonkan FI-801.
+         *
+         * @param parametros array de 32 bytes retornado pelo comando {@link #readParams(int)}.
+         */
         private void ParseParams(byte[] parametros){
             Map<Integer, Integer> BaudRates = Map.of(4,9600,
                     5,19200,
@@ -880,39 +969,6 @@
                 sj.add(String.format("%02X",b & 0xFF));
             }
             System.out.println("Mac: "+sj);
-
-
-
         }
 
-        /**
-         * Imprime os parâmetros de operação de forma legível, com base no array de 32 bytes.
-         * @param params O array de 32 bytes retornado pela função readParams.
-         */
-        public void printParams(byte[] params) {
-            if (params == null || params.length < 32) {
-                System.out.println("Array de parâmetros inválido ou nulo.");
-                return;
-            }
-
-            System.out.println("--- Parâmetros Atuais do Leitor ---");
-            // Usamos '& 0xFF' para garantir que o valor do byte seja exibido como um número de 0 a 255.
-
-            // O manual usa base 1, nosso array usa base 0. Ex: Byte 1 é índice 0.
-            System.out.println("Byte  1 (Índice  0) - BaudRate: " + (params[0] & 0xFF));
-            System.out.println("Byte  2 (Índice  1) - Potência de Transmissão (0-63): " + (params[1] & 0xFF));
-            System.out.println("Byte  6 (Índice  5) - Modo de Trabalho (0=Auto, 1=Comando): " + (params[5] & 0xFF));
-            System.out.println("Byte  7 (Índice  6) - Endereço RS485: " + (params[6] & 0xFF));
-            System.out.println("Byte  8 (Índice  7) - Máx. Tags por Leitura: " + (params[7] & 0xFF));
-            System.out.println("Byte  9 (Índice  8) - Tipo de Tag (4=G2): " + (params[8] & 0xFF));
-            System.out.println("Byte 10 (Índice 9) - Duração da leitura da tag: " + (params[9 & 0xFF]));
-            System.out.println("Byte 11 (Índice 10) - Read Times (M): " + (params[10] & 0xFF));
-            System.out.println("Byte 12 (Índice 11) - Buzzer Ativado (1=Sim, 0=Não): " + (params[11] & 0xFF));
-
-            // Exemplo de como ler um parâmetro de múltiplos bytes (IP)
-            String ipAddress = (params[12] & 0xFF) + "." + (params[13] & 0xFF) + "." + (params[14] & 0xFF) + "." + (params[15] & 0xFF);
-            System.out.println("Bytes 13-16 (Índices 12-15) - Endereço IP: " + ipAddress);
-
-            System.out.println("------------------------------------");
-        }
     }
