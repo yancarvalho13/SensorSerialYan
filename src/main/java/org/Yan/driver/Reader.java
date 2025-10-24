@@ -15,6 +15,10 @@ import java.nio.channels.Selector;
 import java.nio.charset.Charset;
 import java.util.*;
 
+/**
+ * @deprecated Use {@link WirelessReader} no lugar.
+ * Removido a partir da versão 2.0.
+ */
 public class Reader {
 
     // ===== Constantes do legado =====
