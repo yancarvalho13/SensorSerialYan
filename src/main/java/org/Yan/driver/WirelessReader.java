@@ -270,7 +270,7 @@
             final int[]  IDlen    = new int[1];     // bytes válidos da 1ª página
 
             // loop contínuo como no legado
-            var finalTime = System.currentTimeMillis() + 6000;
+            var finalTime = System.currentTimeMillis() + 8000;
             while (System.currentTimeMillis() < finalTime ) {
                 try {
                     // -------- 1) Seleção de antena (igual ao legado) ----------
