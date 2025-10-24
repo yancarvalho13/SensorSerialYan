@@ -1,4 +1,4 @@
-package org.Yan.exceptions;
+package org.Yan.exceptions.domainExceptions;
 
 public class NetWorkErrorException extends RuntimeException {
     public NetWorkErrorException(String message) {

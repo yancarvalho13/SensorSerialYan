@@ -1,7 +1,7 @@
     package org.Yan.driver;
 
-    import org.Yan.exceptions.InvalidResponseReaderException;
-    import org.Yan.exceptions.NetWorkErrorException;
+    import org.Yan.exceptions.domainExceptions.InvalidResponseReaderException;
+    import org.Yan.exceptions.domainExceptions.NetWorkErrorException;
 
     import java.io.*;
     import java.net.Socket;

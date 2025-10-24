@@ -1,10 +1,9 @@
 package org.Yan.service;
 
 import org.Yan.driver.WirelessReader;
-import org.Yan.exceptions.TagListNotFoundException;
-import org.Yan.exceptions.TagNotFoundException;
+import org.Yan.exceptions.apiExceptions.TagListNotFoundException;
+import org.Yan.exceptions.apiExceptions.TagNotFoundException;
 import org.Yan.infra.DTO.TagDto;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import java.net.Socket;

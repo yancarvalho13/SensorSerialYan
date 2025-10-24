@@ -1,6 +1,8 @@
 package org.Yan.exceptions;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.Yan.exceptions.apiExceptions.TagListNotFoundException;
+import org.Yan.exceptions.apiExceptions.TagNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.annotation.ExceptionHandler;

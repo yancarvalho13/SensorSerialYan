@@ -1,4 +1,4 @@
-package org.Yan.exceptions;
+package org.Yan.exceptions.domainExceptions;
 
 public class InvalidResponseReaderException extends RuntimeException {
     public InvalidResponseReaderException(String message) {

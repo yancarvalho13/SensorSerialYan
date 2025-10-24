@@ -1,4 +1,4 @@
-package org.Yan.exceptions;
+package org.Yan.exceptions.apiExceptions;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ResponseStatus;

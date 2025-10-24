@@ -1,22 +1,13 @@
-package org.Yan.infra;
+package org.Yan.infra.controller;
 
-import org.Yan.driver.WirelessReader;
-import org.Yan.infra.DTO.SensorDataDTO;
-import org.Yan.infra.DTO.SensorResponseDTO;
 import org.Yan.infra.DTO.TagDto;
 import org.Yan.service.ISensorService;
-import org.Yan.service.SensorService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Service;
 import org.springframework.web.bind.annotation.*;
 
-import java.net.Socket;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 
 @RestController
