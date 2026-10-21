@@ -1,4 +1,4 @@
-# SensorSerialYan
+# Fonkan FI-801 Java
 
 An open-source Java project for communicating with the **Fonkan FI-801 RFID reader**, parsing its binary responses, and exposing tag readings through a REST API.
 
@@ -35,8 +35,8 @@ The application uses Spring Boot 3.5.5. The legacy serial implementation uses jS
 Clone the repository:
 
 ```sh
-git clone https://github.com/yancarvalho13/SensorSerialYan.git
-cd SensorSerialYan
+git clone https://github.com/yancarvalho13/fonkan-fi-801-java.git
+cd fonkan-fi-801-java
 ```
 
 On Windows:
